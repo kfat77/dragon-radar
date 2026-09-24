@@ -1,0 +1,29 @@
+# 自定义域名配置示例
+#
+# 用法（两步）：
+#   1. 把本文件复制为同目录下的 cname.txt，删掉这些注释，只留一行裸域名，例如：
+#        radar.example.com
+#      再执行 node tools/build-static.js（或 npm run build:static），
+#      构建脚本会据此写出 docs/CNAME。
+#   2. 在域名服务商处按下面的规则配置解析，等 GitHub Pages 校验通过。
+#
+# 子域名（如 radar.example.com）—— 加一条 CNAME 记录：
+#   主机记录  radar
+#   记录类型  CNAME
+#   记录值    kfat77.github.io
+#
+# 裸域名（如 example.com）—— CNAME 记录不允许用在裸域名上，需配 A/AAAA 记录：
+#   主机记录  @
+#   记录类型  A      记录值  185.199.108.153
+#   记录类型  A      记录值  185.199.109.153
+#   记录类型  A      记录值  185.199.110.153
+#   记录类型  A      记录值  185.199.111.153
+#   记录类型  AAAA   记录值  2606:50c0:8000::153
+#   记录类型  AAAA   记录值  2606:50c0:8001::153
+#   记录类型  AAAA   记录值  2606:50c0:8002::153
+#   记录类型  AAAA   记录值  2606:50c0:8003::153
+#   同时建议把 www 用 CNAME 指向裸域名，并把裸域名 A 记录指向 www 再 CNAME 到
+#   kfat77.github.io，否则 Apex 与 www 会解析到不同目标，导致跳来跳去。
+#
+# 解析生效后回到 GitHub 仓库：Settings -> Pages -> Custom domain 填入同一个域名并保存，
+# 等 DNS check 通过后勾选 Enforce HTTPS。

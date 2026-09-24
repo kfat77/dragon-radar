@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="description" content="抓龙雷达：用公开只读接口扫描全链新池与热门标的，用可解释的龙分模型把量价结构摊开。不连接钱包，不构成投资建议。" />
+<title>抓龙雷达 · 全链新池扫描与龙分模型</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='16' fill='%23163300'/><text x='16' y='22' font-size='17' text-anchor='middle' fill='%239fe870' font-family='sans-serif' font-weight='bold'>龙</text></svg>" />
+<link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+<div class="notice" data-notice>
+  <p>本页只做公开数据的统计与证据展示，不构成投资建议，也不代客下单。</p>
+  <button type="button" aria-label="关闭提示" data-notice-close>×</button>
+</div>
+
+<header class="site-header">
+  <a class="brand" href="./" aria-label="抓龙雷达首页"><span class="brand-mark">龙</span><span>抓龙雷达</span></a>
+  <button class="menu-toggle" type="button" data-menu-toggle aria-expanded="false" aria-controls="site-nav">菜单</button>
+  <nav id="site-nav" class="site-nav" data-menu>
+    <button class="is-active" data-view="radar" type="button">雷达</button>
+    <button data-view="board" type="button">龙虎榜</button>
+    <button data-view="track" type="button">追踪 / 抄作业</button>
+    <button data-view="model" type="button">龙分模型</button>
+  </nav>
+</header>
+
+<main>
+  <section class="radar-hero section-wrap">
+    <p class="eyebrow">01 / 抓龙雷达</p>
+    <h1>新池每分钟都在出，<br />先把不能碰的划掉。</h1>
+    <p class="radar-hero-copy">
+      只用公开的只读接口：DexScreener 看价量、深度、买卖笔数和池龄。页面不连接钱包、不签名、不下单，也不替你决定买什么
+      —— 它只把量价结构摊开，让「不碰」这件事变得容易。
+    </p>
+    <ul class="radar-stats" data-radar-stats>
+      <li><b data-radar-scanned>—</b><span>个候选</span></li>
+      <li><b data-radar-pass>—</b><span>个可看</span></li>
+      <li><b data-radar-burst>—</b><span>个量能爆发</span></li>
+      <li><b data-radar-updated>—</b><span>本轮取数时间</span></li>
+    </ul>
+  </section>
+
+  <section class="section-wrap radar-board" aria-labelledby="radar-board-title">
+    <h2 class="radar-visually-hidden" id="radar-board-title">候选扫描结果</h2>
+
+    <div class="radar-toolbar">
+      <div class="radar-group">
+        <p class="radar-label">扫描链</p>
+        <div class="radar-chips" data-radar-chains></div>
+      </div>
+      <div class="radar-group">
+        <p class="radar-label">榜单</p>
+        <div class="radar-chips" data-radar-modes>
+          <button class="radar-chip is-active" type="button" data-mode="all">全部</button>
+          <button class="radar-chip" type="button" data-mode="burst">爆发榜</button>
+          <button class="radar-chip" type="button" data-mode="latent">潜伏榜</button>
+          <button class="radar-chip" type="button" data-mode="hot">热度榜</button>
+          <button class="radar-chip" type="button" data-mode="new">新池</button>
+          <button class="radar-chip" type="button" data-mode="liq">深度榜</button>
+        </div>
+      </div>
+      <div class="radar-group">
+        <p class="radar-label">排序</p>
+        <div class="radar-chips" data-radar-sorts>
+          <button class="radar-chip is-active" type="button" data-sort="score">综合评分</button>
+          <button class="radar-chip" type="button" data-sort="h1">1h 涨幅</button>
+          <button class="radar-chip" type="button" data-sort="h24">24h 涨幅</button>
+          <button class="radar-chip" type="button" data-sort="vol">24h 成交额</button>
+          <button class="radar-chip" type="button" data-sort="conf">置信度</button>
+          <button class="radar-chip" type="button" data-sort="risk">风险（低→高）</button>
+        </div>
+      </div>
+      <div class="radar-actions">
+        <input class="radar-search" type="search" data-radar-search placeholder="搜索符号 / 合约地址" aria-label="搜索标的" />
+        <button class="radar-toggle" type="button" data-radar-depth aria-pressed="false">只看深度≥$30K</button>
+        <button class="radar-toggle is-active" type="button" data-radar-auto aria-pressed="true">自动更新：开</button>
+        <button class="radar-refresh" type="button" data-radar-refresh>刷新这一轮</button>
+      </div>
+    </div>
+
+    <div class="radar-readout">
+      <p class="radar-status" data-radar-status role="status">正在读取公开行情接口…</p>
+      <p class="radar-countdown" data-radar-countdown>手动刷新</p>
+    </div>
+    <p class="radar-verdict-line" data-radar-verdict-line></p>
+
+    <div class="radar-filters" data-radar-filters></div>
+
+    <div class="radar-list" data-radar-list>
+      <p class="radar-empty">正在读取公开行情接口…</p>
+    </div>
+
+    <div class="table-wrap" data-radar-table hidden>
+      <table class="radar-table">
+        <thead>
+          <tr>
+            <th style="width:52px">#</th>
+            <th>标的</th>
+            <th style="width:96px">龙分</th>
+            <th style="width:78px">判定</th>
+            <th style="width:74px">5m</th>
+            <th style="width:74px">1h</th>
+            <th style="width:74px">6h</th>
+            <th style="width:74px">24h</th>
+            <th style="width:96px">24h 成交</th>
+            <th style="width:96px">深度</th>
+            <th style="width:88px">市值</th>
+            <th style="width:88px">净买盘</th>
+            <th style="width:76px">置信</th>
+            <th style="width:70px">风险</th>
+          </tr>
+        </thead>
+        <tbody data-radar-tbody></tbody>
+      </table>
+    </div>
+
+    <p class="radar-source" data-radar-source></p>
+  </section>
+
+  <!-- ============================ 追踪 / 抄作业 ============================ -->
+  <section class="section-wrap radar-track" data-panel="track" hidden aria-labelledby="radar-track-title">
+    <div class="section-heading">
+      <p class="eyebrow">02 / 追踪</p>
+      <h2 id="radar-track-title">跟车监控与自己的持仓</h2>
+      <p class="section-copy">
+        前半块复刻 fomo.family 的个人主页结构，后半块是你自己的持仓账本：填成本价，用实时报价算浮盈。
+      </p>
+    </div>
+    <div class="radar-track-grid">
+      <div class="radar-panel">
+        <p class="card-index">跟车监控</p>
+        <div class="radar-form-row">
+          <input class="radar-input" id="fomoHandle" value="IcyNoisyWhale" placeholder="fomo handle，如 IcyNoisyWhale" />
+          <button class="radar-refresh" id="btnFomo" type="button">拉取</button>
+          <button class="radar-toggle" id="btnFomoOpen" type="button">打开原站</button>
+        </div>
+        <div class="radar-form-row">
+          <input class="radar-input" id="fomoToken" type="password" placeholder="fomo 授权令牌（可选，仅存本机浏览器）" />
+          <button class="radar-toggle" id="btnFomoSave" type="button">保存令牌</button>
+        </div>
+        <p class="radar-note" id="fomoHint">fomo.family 的公开接口需要登录态，未填令牌时展示官方公开名片。</p>
+        <div id="fomoBody"></div>
+      </div>
+
+      <div class="radar-panel">
+        <p class="card-index">手动持仓</p>
+        <div class="radar-form-row">
+          <input class="radar-input" id="posAddr" placeholder="代币合约地址" />
+          <input class="radar-input sm" id="posCost" type="number" step="any" placeholder="成本价 $" />
+          <input class="radar-input sm" id="posSize" type="number" step="any" placeholder="数量" />
+          <button class="radar-refresh" id="btnPosAdd" type="button">加入</button>
+        </div>
+        <p class="radar-note">成本价用美元计价；数量留空按 1 计算。价格来自 DexScreener 实时报价。</p>
+        <div class="table-wrap">
+          <table class="radar-table">
+            <thead>
+              <tr>
+                <th>标的</th><th style="width:100px">现价</th><th style="width:100px">成本</th>
+                <th style="width:80px">数量</th><th style="width:130px">浮动盈亏</th><th style="width:56px"></th>
+              </tr>
+            </thead>
+            <tbody id="posBody"></tbody>
+          </table>
+        </div>
+        <div class="radar-total" id="posTotal"></div>
+        <div class="radar-form-row">
+          <input class="radar-input" id="wlAddr" placeholder="把合约地址加入雷达常驻自选" />
+          <button class="radar-toggle" id="btnWlAdd" type="button">加自选</button>
+        </div>
+        <div class="radar-watchlist" id="wlList"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================ 龙分模型 ============================ -->
+  <section class="section-wrap radar-guide" data-panel="model" hidden aria-labelledby="radar-guide-title">
+    <div class="section-heading">
+      <p class="eyebrow">03 / 龙分模型</p>
+      <h2 id="radar-guide-title">分数不是推荐，只是把证据摆平</h2>
+      <p class="section-copy">
+        方向分由八个可解释因子加权得出，风险扣分与置信度单独输出。看懂下面四条读法，就不需要信任何人。
+      </p>
+    </div>
+    <div class="radar-guide-grid" data-radar-weights></div>
+
+    <div class="radar-panel" style="margin-top:18px">
+      <p class="card-index">因子权重</p>
+      <div class="table-wrap">
+        <table class="radar-table">
+          <thead><tr><th>因子</th><th style="width:80px">权重</th><th>衡量什么 / 满分条件</th></tr></thead>
+          <tbody id="modelBody"></tbody>
+        </table>
+      </div>
+      <div class="radar-legend" id="gradeList"></div>
+    </div>
+  </section>
+
+  <section class="section-wrap radar-caveat" aria-labelledby="radar-caveat-title">
+    <div class="radar-caveat-card">
+      <p class="card-index">边界与缺口</p>
+      <h2 id="radar-caveat-title">这些事，这一页做不到</h2>
+      <ul class="radar-caveat-list">
+        <li>只查得到接口里有的字段。DexScreener 没收录的链或代币不会出现在候选池，不等于安全，也不等于危险。</li>
+        <li>候选池由「官方推广榜 + 最新代币资料 + 关键词滚动扩样 + 你的自选 + 上轮强势标的」合成，每轮覆盖 100～160 个，不是全市场。</li>
+        <li>数据是每次扫描的链上快照，不是实时推送。限流或上游异常时页面会直说，不会用缓存或演示数据撑场面。</li>
+        <li>不连接钱包、不需要任何密钥、不发起交易。你的地址和私钥都不会出现在这一页。</li>
+        <li>「可看」的意思是「值得自己去核一遍」，不是「可以买」。真正的风险永远在合约之外。</li>
+      </ul>
+      <p class="disclaimer">
+        免责声明：以上内容基于公开数据和量化分析，仅供参考，不构成投资建议。市场有风险，投资需谨慎。任何投资决策应结合个人风险承受能力、资金状况和投资目标独立判断，必要时咨询持牌专业机构。过往表现不预示未来收益。
+      </p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <a class="brand" href="./"><span class="brand-mark">龙</span><span>抓龙雷达</span></a>
+  <p>仅作信息整理，不构成开户、投资、法律或税务建议。</p>
+</footer>
+
+<div class="toast" id="toast" hidden></div>
+<!-- build:scripts -->
+<!-- 本地 Node 形态：数据由 server.js 的 /api/* 提供 -->
+<script src="./app.js"></script>
+<!-- /build:scripts -->
+</body>
+</html>

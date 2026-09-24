@@ -1,0 +1,28 @@
+{
+  "name": "dragon-radar",
+  "version": "1.0.0",
+  "description": "抓龙雷达 / Dragon Radar - 全链新池公开数据扫描与可解释龙分模型，零运行时依赖",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build:static": "node tools/build-static.js",
+    "test": "node test/score.test.js && node test/engine.test.js",
+    "test:frontend": "node test/frontend.smoke.js",
+    "serve:static": "node tools/serve-static.js"
+  },
+  "keywords": [
+    "crypto",
+    "dexscreener",
+    "memecoin",
+    "scanner",
+    "dashboard",
+    "zero-dependency"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.0"
+  }
+}
