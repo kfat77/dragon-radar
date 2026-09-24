@@ -234,7 +234,7 @@ dragon-radar/
 | --- | --- |
 | `.gitattributes` | 统一换行符为 LF，避免跨平台反复改行尾 |
 | `.gitignore` | 排除 `node_modules/`、`data/`、日志、`cname.txt`、环境变量等本地文件 |
-| `LICENSE` | MIT 许可，附数据与金融信息附加声明 |
+| `LICENSE` | MIT 许可 |
 | `README.md` | 本文档，中英双语 |
 | `cname.example` | 自定义域名配置示例（子域名 CNAME、裸域名 A/AAAA 记录写法） |
 | `package.json` | 零运行时依赖，脚本入口 |
@@ -516,6 +516,11 @@ GeckoTerminal 的免费档限流极紧（约每 15 秒 1 次），因此它在�
 投资需谨慎。任何投资决策应结合个人风险承受能力、资金状况和投资目标独立判断，
 必要时咨询持牌专业机构。过往表现不预示未来收益。
 
+关于数据与金融信息的附加说明：本项目是公开数据的统计工具，不连接钱包、不需要任何密钥、
+不代客下单，其输出不构成投资建议。全部行情读自第三方公开接口（主要为 DexScreener），
+可能延迟、缺失或错误。龙分与分级只是对这些数据的机械加权计算，不是推荐。
+任何依据本项目做出的决策及其风险由使用者自行承担。
+
 ---
 
 # English Documentation
@@ -729,7 +734,7 @@ re-run `npm run build:static`.
 | --- | --- |
 | `.gitattributes` | Normalizes line endings to LF across platforms |
 | `.gitignore` | Excludes `node_modules/`, `data/`, logs, `cname.txt`, environment files |
-| `LICENSE` | MIT license plus a data and financial information notice |
+| `LICENSE` | MIT license |
 | `README.md` | This document, bilingual |
 | `cname.example` | Custom domain example, with CNAME and A/AAAA record layouts |
 | `package.json` | Zero runtime dependencies, script entry points |
@@ -1038,6 +1043,13 @@ only and does not constitute investment advice. Markets carry risk; invest with 
 investment decision should be made independently in light of your own risk tolerance,
 financial situation and objectives, and you should consult a licensed professional where
 appropriate. Past performance does not indicate future results.
+
+Additional notice on data and financial information: this project is a public-data
+statistics tool. It does not connect to any wallet, does not require API keys and does not
+place orders. Nothing it outputs is investment advice. All market data is read from
+third-party public interfaces, primarily DexScreener, and may be delayed, incomplete or
+wrong. Scores and grades are mechanical arithmetic over that data, not recommendations. Any
+decision you make on the basis of this software is your own, and you bear its risk.
 
 ---
 

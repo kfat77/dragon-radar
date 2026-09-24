@@ -19,22 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-Additional notice on data and financial information:
-
-This project is a public-data statistics tool. It does not connect to any
-wallet, does not require API keys, and does not place orders. Nothing it
-outputs is investment advice. All market data is read from third-party public
-interfaces (primarily DexScreener) and may be delayed, incomplete, or wrong.
-Scores and grades are mechanical arithmetic over that data, not
-recommendations. Any decision you make on the basis of this software is your
-own, and you bear its risk. See the "Disclaimer" section of README.md.
-
-附加声明（数据与金融信息）：
-
-本项目是公开数据的统计工具，不连接钱包、不需要任何密钥、不代客下单，其输出
-不构成投资建议。全部行情读自第三方公开接口（主要为 DexScreener），可能延迟、
-缺失或错误。龙分与分级只是对这些数据的机械加权计算，不是推荐。任何依据本项目
-做出的决策及其风险由你自行承担。详见 README.md 的「免责声明」一节。
