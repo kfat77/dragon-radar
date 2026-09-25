@@ -455,10 +455,15 @@ node tools/ledger-report.js --why=upgrade --chain=solana
 | 22:14 | 118 | 25.4% | +0.0% | −2.1% | **+1.0%** | 55.1% | 0.9726 |
 | 22:24 | 125 | 28.0% | +0.0% | −2.1% | +1.2% | 55.2% | 0.9799 |
 | 22:29 | 129 | 28.7% | +0.0% | −2.1% | +0.9% | 54.3% | 0.9842 |
+| 00:41 | 227 | 37.0% | +0.0% | −0.6% | **+0.0%** | 50.2% | 1.0536 |
 
 十七分钟里，中位超额从 **−3.2% 翻到 +1.0%**：先是「雷达跑输自己的池子 3 个百分点」，
 再变成「跑赢 1 个百分点」。**这两个说法没有一个是结论** —— 变的是那 15 分钟里
 等权榜单指数自己从 +1.9% 掉到 −2.1%（净值 0.9943 → 0.9726），而样本也从 68 笔涨到 118 笔。
+
+再往下跑到 227 笔（又过了两小时四十分钟），中位超额收敛到 **+0.0%**、跑赢基准 **50.2%**。
+也就是说：15 分钟视界上，信号与池子平均**没有可分辨的差别**，22:14 那个 +1.0% 是噪声。
+（同期等权净值从 0.9842 走到 1.0536，池子整体涨了 5 个百分点。）
 
 这段漂移恰恰是这个模块存在的全部理由：
 
@@ -502,6 +507,30 @@ node tools/ledger-report.js --why=upgrade --chain=solana
    这正是「只报收益不报回撤会让人高估这套信号」的实证。
 3. **前两档是唯一在两个视界上都为正的**：真龙 +11.9%、龙头候选 +2.6% 的 1 小时超额，
    而潜龙 −3.7%。方向一致，但样本只有 4 笔和 9 笔，仍然不构成结论。
+
+**但 82 笔时的 −0.0% 也不是结论。** 跑到 00:41，1 小时视界样本涨到 192 笔，同一个视界变成：
+
+```text
+1 小时           192      47     0    32.3%      -0.7%      +0.1%      -1.7%     42.2%
+平均最大浮亏 -14.0%（191 笔有观测序列）
+按档位分层（1 小时 · 全部信号）
+  真龙               8    62.5%      +1.3%      -0.5%
+  龙头候选            42    35.7%      -4.3%     -10.8%
+  潜龙              14    42.9%      -3.2%      -3.7%
+  观察              46    26.1%      -3.1%      -2.9%
+  假龙              82    29.3%      +0.0%      -0.7%
+```
+
+样本翻倍多之后，1 小时视界上信号**明确跑输自己的池子**：中位超额 −1.7%、跑赢基准 42.2%。
+三点随之要改口：
+
+- 「基本分不开」升级为「**略输**」。−1.7% 在 192 笔上已经不是噪声级的小数。
+- **平均最大浮亏 −14.0%**（15 分钟是 −7.9%）。收益没改善，回撤先翻倍。
+- **档位分层在 1 小时视界上基本没兑现**：只有真龙（8 笔）的中位收益是正的（+1.3%），
+  而它的超额也是 −0.5%；龙头候选 42 笔的中位超额是 **−10.8%**，比假龙（82 笔，−0.7%）还差。
+  也就是说在这个视界上，**龙分越高不代表越赚**。这是这份数据里最不利于本模型的结论，照原样列出。
+- 尾部很重：1 小时视界 p25 −21.1%、p75 +0.8%、最好 +1047.8%、**最差 −99.3%**。
+  胜率 32.3% 配这种分布，说明它靠极少数大赢家撑均值，而多数样本在亏。
 
 ## 四、环境要求
 
@@ -1616,11 +1645,17 @@ loss".
 | 22:14 | 118 | 25.4% | +0.0% | -2.1% | **+1.0%** | 55.1% | 0.9726 |
 | 22:24 | 125 | 28.0% | +0.0% | -2.1% | +1.2% | 55.2% | 0.9799 |
 | 22:29 | 129 | 28.7% | +0.0% | -2.1% | +0.9% | 54.3% | 0.9842 |
+| 00:41 | 227 | 37.0% | +0.0% | -0.6% | **+0.0%** | 50.2% | 1.0536 |
 
 In seventeen minutes the median excess **flipped from -3.2% to +1.0%**: first "the radar trails its
 own pool by 3 points", then "it leads by 1 point". **Neither statement is a result.** What changed
 was that during those 15 minutes the equal-weighted board index itself fell from +1.9% to -2.1%
 (net value 0.9943 to 0.9726), while the sample grew from 68 to 118.
+
+Running further out to 227 samples (two hours and forty minutes later), the median excess converged
+to **+0.0%** with a beat rate of **50.2%**. In other words, at the 15-minute horizon the signals are
+**indistinguishable from the pool average**, and the +1.0% seen at 22:14 was noise. (Over the same
+stretch the equal-weighted net value travelled from 0.9842 to 1.0536 -- the pool rose about 5 points.)
 
 This drift is the entire reason the module exists:
 
@@ -1674,6 +1709,36 @@ Three points:
 3. **The top two tiers are the only ones positive at both horizons**: Dragon at +11.9% and Candidate at
    +2.6% excess at 1 hour, against Latent at -3.7%. The direction is consistent, but with 4 and 9
    samples these are still not conclusions.
+
+**But the -0.0% at 82 samples is not a result either.** Running out to 00:41, the 1-hour horizon
+reached 192 samples and became:
+
+```text
+1 hour          192      47     0    32.3%      -0.7%      +0.1%      -1.7%     42.2%
+Average maximum adverse excursion -14.0% (191 signals had an observation series)
+By grade (1 hour, all signals)
+  Dragon       8   62.5%      +1.3%      -0.5%
+  Candidate   42   35.7%      -4.3%     -10.8%
+  Latent      14   42.9%      -3.2%      -3.7%
+  Watch       46   26.1%      -3.1%      -2.9%
+  Trash       82   29.3%      +0.0%      -0.7%
+```
+
+With more than double the sample, at the 1-hour horizon the signals **clearly trail their own pool**:
+median excess -1.7%, beat rate 42.2%. Three revisions follow:
+
+- "Barely distinguishable" must be upgraded to "**slightly behind**". At 192 samples, -1.7% is no
+  longer a noise-level fraction.
+- **Average maximum adverse excursion is -14.0%** (against -7.9% at 15 minutes). The return did not
+  improve; the drawdown doubled first.
+- **The grade layering largely fails to hold up at 1 hour**: only Dragon (8 signals) has a positive
+  median return (+1.3%), and even its excess is -0.5%; Candidate at 42 signals has a median excess of
+  **-10.8%**, worse than Trash (82 signals, -0.7%). In other words, at this horizon **a higher dragon
+  score does not mean a better return**. This is the least favourable conclusion in the whole dataset
+  for this model, and it is written down as measured.
+- The tails are heavy: at 1 hour, p25 -21.1%, p75 +0.8%, best +1047.8%, **worst -99.3%**. A 32.3% win
+  rate with that distribution means the mean is carried by a handful of large winners while most
+  samples lose.
 
 ## 4. Requirements
 
