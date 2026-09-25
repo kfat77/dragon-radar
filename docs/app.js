@@ -145,6 +145,42 @@ async function refresh() {
   }
 }
 
+// ------------------------------------------------------------ 自检
+// 页面长期没数据时，绝大多数情况不是代码问题，而是浏览器发不出跨域请求
+// （本地代理挂掉、扩展拦截、DNS 或企业网络策略）。这里在首轮扫描迟迟不返回时，
+// 主动探测一次上游端点，把「网络不通」和「只是还没扫完」区分开，直接写在状态行上，
+// 用户不必开控制台猜。
+const BOOT_STALL_MS = 20000;
+let selfCheckDone = false;
+
+async function selfCheck() {
+  if (selfCheckDone) return;
+  selfCheckDone = true;
+  if (store.tokens.length) return;               // 已经有数据，无需自检
+  const engineState = ENGINE && ENGINE.state;
+  if (engineState && engineState.scanning) {     // 仍在扫描，属正常
+    const line = $('[data-radar-countdown]');
+    if (line) line.textContent = '首轮扫描仍在进行（拉取十余次公开接口）…';
+    selfCheckDone = false;
+    setTimeout(selfCheck, BOOT_STALL_MS);
+    return;
+  }
+  let netOk = false;
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 8000);
+    const r = await fetch('https://api.dexscreener.com/token-boosts/top/v1', { signal: ctl.signal });
+    clearTimeout(t);
+    netOk = r.ok;
+  } catch { netOk = false; }
+  if (netOk) {
+    setStatus('已连上行情接口，但本轮尚未取到标的。可再等一轮，或点「刷新这一轮」重试。', 'is-warn');
+  } else {
+    setStatus('无法访问行情接口 api.dexscreener.com：浏览器没能发出跨域请求。'
+      + '请检查本机代理是否在运行、浏览器扩展是否拦截，或换一个网络后刷新。代码本身无异常。', 'is-error');
+  }
+}
+
 function setStatus(text, cls) {
   const p = $('[data-radar-status]');
   p.textContent = text;
@@ -752,4 +788,6 @@ let pollTimer = null;
   await loadWatchlist();
   pollTimer = setInterval(() => { if (store.auto) refresh(); }, ENGINE ? 5000 : 15000);
   setInterval(() => { if (store.view === 'track') refreshPositions(); }, 30000);
+  // 首轮扫描迟迟不返回时，主动区分「网络不通」与「还在扫」，把结论写在状态行上。
+  setTimeout(selfCheck, BOOT_STALL_MS);
 })();

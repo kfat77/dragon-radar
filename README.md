@@ -87,6 +87,9 @@ tracking. Zero runtime dependencies.
 - **数据缺口披露。** 新池的 24 小时、6 小时、1 小时窗口尚未成熟时，
   DexScreener 会把几个周期的字段填成同一个值。模型能识别这种退化统计，
   只在真正成熟的窗口上做归一化，不硬凑共振数。
+- **首屏自检。** 首轮扫描超过 20 秒仍未取到任何标的时，页面会主动探测一次上游端点，
+  把结论直接写在状态行上：连得上就是「还没取到标的，可再等一轮」；连不上就是
+  「浏览器没能发出跨域请求，请检查代理或网络」。不必开控制台猜。
 
 ## 三、龙分模型
 
@@ -299,6 +302,9 @@ npm test
 
 - `npm run test:frontend`：37 项通过。先用 `npm start` 起服务，再用 jsdom 跑真实
   `public/app.js`，断言卡片、龙虎榜、筛选、追踪页、模型页都真的渲染出来了。
+  **注意**：端口 8791 的请求不要走系统代理。若本机设有 `http_proxy` / `https_proxy`，
+  请先清掉或把 `127.0.0.1` 加进 `no_proxy`，否则 Node 会把回环请求发给代理，
+  报 `ECONNREFUSED`（详见 Q13 第 4 条与注意事项）。
 - `node test/static.smoke.js`：55 项通过。直接用 `docs/` 里构建出来的那一整套脚本，
   不需要后端、不需要网络，断言「真正会部署上去的那份产物」能自己扫描、自己算分、
   自己渲染，并覆盖链筛选、搜索、行展开、手动刷新等交互。
@@ -428,11 +434,26 @@ gh api repos/kfat77/dragon-radar/pages
 
 ## 十二、常见问题
 
-**Q1：页面一直显示「正在扫描候选池…」，卡片是空的。**
+**Q1：页面一直显示「正在扫描候选池…」，或者统计数字全是「—」，卡片是空的。**
 
-首轮扫描要拉若干次公开接口，通常 3 至 8 秒。超过 30 秒还没有结果，看状态行是否提示
-「扫描出错」，或打开浏览器控制台看请求是否被拦。常见原因是网络访问不到
-`api.dexscreener.com`，或同一出口 IP 触发了限流。
+首轮扫描要连续拉 13 至 20 次公开接口，通常 3 至 8 秒。超过 30 秒仍无结果，按下面
+顺序排查：
+
+1. 打开浏览器控制台（F12）的 Network 面板，筛 `dexscreener`。
+   - 请求**根本没发出去**：多半是浏览器代理问题。本机若在用 `127.0.0.1` 这类本地代理，
+     代理进程没启动、或浏览器未继承系统代理时，跨域请求会静默失败。见 Q13。
+   - 请求发出但**状态 0 / blocked / CORS 报错**：跨域被拦。`api.dexscreener.com`
+     返回 `access-control-allow-origin: *`，正常浏览器不会拦，出现这种情况通常是
+     代理或扩展改写了响应头。
+   - 请求返回 **429**：触发了上游限流，等下一轮即可。
+2. 看状态行 `[data-radar-status]` 是否提示「扫描出错」，并看 Console 面板里
+   `ERR_PROXY_CONNECTION_FAILED`、`ERR_NAME_NOT_RESOLVED`、`ERR_INTERNET_DISCONNECTED`
+   这类网络层错误码。
+3. 直接访问 <https://api.dexscreener.com/token-boosts/top/v1> 验证浏览器本身能不能通。
+   能打开 JSON 说明网络没问题，问题在前端执行；打不开就是网络或代理。
+
+页面**不会**用缓存或演示数据撑场面：拿不到数据就是拿不到，统计栏显示「—」。
+详见 Q13 的排查表。
 
 **Q2：为什么 GitHub Pages 版的「追踪 / 抄作业」页拿不到实时持仓？**
 
@@ -499,6 +520,41 @@ GeckoTerminal 的免费档限流极紧（约每 15 秒 1 次），因此它在�
 量能因子优先用相邻两次快照的真实增量。第一次打开时还没有上一轮快照，只能退回按
 5 分钟成交额折算。挂着不动，第二轮起就会用真实区间增量。
 
+**Q13：页面一直没数据，怎么判断是网络问题还是前端问题？**
+
+先分清两种现象，两者的成因完全不同：
+
+| 现象 | 含义 | 处理 |
+| --- | --- | --- |
+| 状态行停在「正在读取公开行情接口…」，统计栏全「—」 | 脚本没跑起来，或首轮扫描尚未返回 | 看 Console 是否有报错；首轮正常需 3 至 8 秒 |
+| 状态行显示「扫描出错：…」 | 请求发出去了但失败 | 按下方清单逐项排除 |
+| 状态行「本轮已完成」但卡片为空 | 扫描成功，没有标的通过质量地板 | 正常现象，放宽筛选或等下一轮 |
+
+按以下顺序定位：
+
+1. **Console 面板找错误码。** `ERR_PROXY_CONNECTION_FAILED` 指向本地代理不可用；
+   `ERR_NAME_NOT_RESOLVED` 指向 DNS；`ERR_INTERNET_DISCONNECTED` 指向断网。
+2. **Network 面板看请求列表。** 筛选 `api.dexscreener.com`。列表里一条都没有，
+   说明请求根本没发出去，属于脚本或代理层面的问题；有请求但标红，看状态码。
+3. **验证浏览器直连能力。** 在新标签页打开
+   <https://api.dexscreener.com/token-boosts/top/v1>。返回一大段 JSON 说明网络通，
+   问题在前端；转圈或报错说明网络或代理不通。
+4. **临时关掉代理复测。** 若在用本地代理软件（Clash、V2Ray 等），完全退出该进程
+   后再刷新页面。很多本地代理只处理系统代理流量，浏览器扩展或 PAC 规则会把
+   非白名单域名静默丢弃，现象正是「请求一条都不发」。
+5. **换一个网络复测。** 用手机热点或另一台机器打开同一地址。能出数据说明是
+   当前机器的网络环境问题，与代码无关。
+
+如果以上都通过，用本机的命令行对照验证数据源是否可用：
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" https://api.dexscreener.com/token-boosts/top/v1
+# 期望输出 200
+```
+
+命令行返回 200 而浏览器不出数据，问题一定在浏览器这一侧（代理、扩展、DNS 或
+企业网络策略），与页面代码无关。本项目的数据链路在 Node 侧有完整测试，见第 10 节。
+
 ## 十三、注意事项
 
 - 本项目不连接钱包、不请求签名、不需要私钥、不发起任何交易。
@@ -509,6 +565,9 @@ GeckoTerminal 的免费档限流极紧（约每 15 秒 1 次），因此它在�
 - 页面按 A 股习惯着色：涨为红、跌为绿。这不是笔误。
 - 请勿把 `data/` 目录或任何令牌提交进仓库。`.gitignore` 已覆盖这两类文件。
 - 主分支只跑零依赖测试。`jsdom` 相关的冒烟测试是可选脚本，不要为了它在 CI 里引入重依赖。
+- 若本机设有系统级代理（`http_proxy` / `https_proxy`），跑前端冒烟测试或本地调服务时，
+  请把 `127.0.0.1`、`localhost` 加入 `no_proxy`。否则回环请求会被送到代理，
+  表现为 `ECONNREFUSED` 或代理返回 502，看起来像服务没起来，实际是请求走错了路。
 
 ## 十四、免责声明
 
@@ -577,6 +636,11 @@ There are two runtime modes. Both share the same scoring model and the same fron
 - **Degenerate-statistics disclosure.** For pools younger than the window, DexScreener
   returns the same value for the 24h, 6h, 1h and 5m fields. The model detects this and only
   normalizes over windows that are genuinely mature.
+- **First-paint self check.** If the first scan has not produced a single token after 20
+  seconds, the page probes the upstream endpoint once and writes the conclusion straight
+  into the status line: reachable means "not here yet, wait one more round"; unreachable
+  means "the browser could not send a cross-origin request, check your proxy or network".
+  No need to open the console and guess.
 
 ## 3. The Dragon Score
 
@@ -804,6 +868,10 @@ Two smoke tests require `jsdom`:
 - `npm run test:frontend`: 37 assertions pass. Start the server with `npm start`, then run
   the real `public/app.js` under jsdom and assert that cards, the table, filters, the
   tracking view and the model view actually render.
+  **Note**: requests to port 8791 must not go through a system proxy. If `http_proxy` or
+  `https_proxy` is set on the machine, clear it or add `127.0.0.1` to `no_proxy`, otherwise
+  Node sends the loopback request to the proxy and fails with `ECONNREFUSED` (see Q13 item 4
+  and the Caveats section).
 - `node test/static.smoke.js`: 55 assertions pass. Runs the exact set of scripts built into
   `docs/`, with no backend and no network, and asserts that the artifact that actually ships
   can scan, score and render by itself. It also covers chain filtering, search, row
@@ -938,12 +1006,28 @@ The site is usually reachable one to two minutes after the first deployment.
 
 ## 12. FAQ
 
-**Q1: The page is stuck on "scanning the candidate pool" and no cards appear.**
+**Q1: The page is stuck on "scanning the candidate pool", or every statistic shows "-" with no cards.**
 
-The first scan makes several public API calls and normally takes 3 to 8 seconds. If there is
-still nothing after 30 seconds, check whether the status line reports a scan error, and open
-the browser console to see whether requests are being blocked. The usual causes are no route
-to `api.dexscreener.com`, or rate limiting on the shared egress IP.
+The first scan makes 13 to 20 consecutive public API calls and normally takes 3 to 8 seconds.
+If there is still nothing after 30 seconds, work through this order:
+
+1. Open the browser console (F12), Network tab, filter by `dexscreener`.
+   - **No request appears at all**: almost always a browser proxy problem. If the machine runs
+     a local proxy such as `127.0.0.1`, a dead proxy process or a browser that does not inherit
+     the system proxy makes cross-origin calls fail silently. See Q13.
+   - **Requests appear but show status 0 / blocked / CORS errors**: cross-origin blocking.
+     `api.dexscreener.com` returns `access-control-allow-origin: *`, so a normal browser will
+     not block it; this usually means a proxy or extension rewrote the response headers.
+   - **Requests return 429**: upstream rate limiting. Wait for the next round.
+2. Check whether the status line `[data-radar-status]` reports a scan error, and look for
+   network-level codes such as `ERR_PROXY_CONNECTION_FAILED`, `ERR_NAME_NOT_RESOLVED` or
+   `ERR_INTERNET_DISCONNECTED` in the Console panel.
+3. Open <https://api.dexscreener.com/token-boosts/top/v1> directly to verify whether the
+   browser itself can reach the endpoint. A JSON response means the network is fine and the
+   problem is in the front end; a hang or error means it is a network or proxy issue.
+
+The page never falls back to cache or demo data: if the data cannot be read, it is not shown,
+and the statistics read "-". See the triage table in Q13.
 
 **Q2: Why can the GitHub Pages build not read live positions on the tracking view?**
 
@@ -1020,6 +1104,46 @@ The volume factor prefers the real delta between two adjacent snapshots. On the 
 open there is no previous snapshot, so it falls back to a 5 minute volume extrapolation.
 Leave the page open and from the second round onward it uses real interval deltas.
 
+**Q13: The page shows no data at all. How do I tell a network problem from a front-end problem?**
+
+Separate the symptom first; the causes are completely different:
+
+| Symptom | Meaning | Action |
+| --- | --- | --- |
+| Status stuck on "reading public market endpoints", stats all "-" | Scripts never ran, or the first scan has not returned yet | Check the Console for errors; a normal first scan takes 3 to 8 seconds |
+| Status shows "scan error: ..." | Requests were sent and failed | Work through the checklist below |
+| Status shows "round complete" but no cards | The scan succeeded and nothing passed the quality floor | Expected; relax the filters or wait for the next round |
+
+Locate the cause in this order:
+
+1. **Look for an error code in the Console panel.** `ERR_PROXY_CONNECTION_FAILED` points at an
+   unavailable local proxy; `ERR_NAME_NOT_RESOLVED` points at DNS; `ERR_INTERNET_DISCONNECTED`
+   points at a dead connection.
+2. **Look at the request list in the Network panel.** Filter by `api.dexscreener.com`. An empty
+   list means no request was ever sent, which is a script or proxy level problem; requests that
+   are present but marked red should be read by status code.
+3. **Verify the browser can reach the endpoint.** Open
+   <https://api.dexscreener.com/token-boosts/top/v1> in a new tab. A large JSON body means the
+   network is fine and the problem is in the front end; a spinner or an error means the network
+   or proxy is at fault.
+4. **Temporarily disable the proxy and retest.** If a local proxy client is running (Clash,
+   V2Ray and similar), quit the process entirely and reload the page. Many local proxies only
+   handle system proxy traffic, while a browser extension or PAC rule silently drops
+   non-allowlisted domains, which produces exactly the "not a single request" symptom.
+5. **Test on another network.** Open the same URL on a phone hotspot or another machine. If it
+   produces data, the problem is this machine's network environment, not the code.
+
+If all of the above pass, verify the data source from the command line on the same machine:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" https://api.dexscreener.com/token-boosts/top/v1
+# expected output: 200
+```
+
+A 200 from the command line while the browser shows nothing means the problem is on the browser
+side (proxy, extension, DNS or a corporate network policy) and unrelated to the page code. The
+data pipeline is covered by the Node-side tests listed in section 10.
+
 ## 13. Caveats
 
 - This project does not connect to a wallet, does not request signatures, does not need
@@ -1035,6 +1159,11 @@ Leave the page open and from the second round onward it uses real interval delta
   covers both.
 - CI on the main branch runs only the zero-dependency tests. The `jsdom` smoke tests are
   optional scripts; do not pull heavy dependencies into CI for their sake.
+- If the machine has a system-wide proxy (`http_proxy` / `https_proxy`), add `127.0.0.1` and
+  `localhost` to `no_proxy` before running the front-end smoke test or hitting the local
+  server. Otherwise loopback requests are handed to the proxy and surface as `ECONNREFUSED`
+  or a 502 from the proxy, which looks like the server failed to start when in fact the
+  request simply took the wrong route.
 
 ## 14. Disclaimer
 
