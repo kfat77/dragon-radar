@@ -14,17 +14,20 @@ const S = require('./lib/sources');
 const { scoreToken, WEIGHTS, GRADES } = require('./lib/score');
 const Sec = require('./lib/security');            // 合约安全 / 筹码 / 仿盘
 const Checkup = require('./lib/checkup');         // 四维体检模型（纯函数）
+const Ledger = require('./lib/ledger');           // 信号账本与前瞻回测（纯函数）
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
 const DATA_DIR = path.join(ROOT, 'data');
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const RADAR_FILE = path.join(DATA_DIR, 'radar.json');
+const LEDGER_FILE = path.join(DATA_DIR, 'ledger.json');
 
 const PORT = Number(process.env.PORT || 8791);
 const SCAN_INTERVAL_MS = Number(process.env.SCAN_INTERVAL_MS || 60000);
 const MAX_HISTORY = 720;          // 每代币保留快照点数
 const MAX_TOKENS = Number(process.env.MAX_TOKENS || 420);
+const MAX_BACKFILL = 240;         // 单轮最多为多少个待结算信号补价（防跑飞）
 
 // ------------------------------------------------------------------ 运行状态
 const state = {
@@ -42,6 +45,7 @@ const state = {
   priceCache: {},           // tokenAddress -> {priceUsd, at, symbol, chainId}
   checkupPrev: {},          // key -> {holderCount, at}，供叙事维度算持币地址增量
   checkupCache: {},         // key -> 四维体检结果（外部风控接口很慢，必须长缓存）
+  ledger: Ledger.create(),  // 信号账本：前瞻记录信号、事后按真实价格结算
 };
 
 const keyOf = (chainId, addr) => `${chainId}:${String(addr).toLowerCase()}`;
@@ -62,6 +66,13 @@ function loadState() {
       if (j && Array.isArray(j.tokens)) { state.tokens = j.tokens; state.lastScanAt = j.updatedAt || 0; state.meta = j.meta || {}; }
     }
   } catch (e) { console.warn('[radar] 读取缓存失败：', e.message); }
+  try {
+    if (fs.existsSync(LEDGER_FILE)) {
+      const j = JSON.parse(fs.readFileSync(LEDGER_FILE, 'utf8'));
+      // 旧版本或损坏的账本由 Ledger.normalize 内部重置，不让半个结构污染统计
+      state.ledger = Ledger.normalize(j);
+    }
+  } catch (e) { console.warn('[ledger] 读取失败，本轮从空账本开始：', e.message); }
 }
 
 let saveTimer = null;
@@ -74,6 +85,20 @@ function saveStateSoon() {
       fs.writeFileSync(STATE_FILE, JSON.stringify({ watchlist: state.watchlist, history: state.history, snapshots: state.snapshots, checkupPrev: state.checkupPrev }));
     } catch (e) { console.warn('[state] 写入失败：', e.message); }
   }, 1500);
+}
+
+// 账本单独落盘：它比 state 大得多（含未结算信号的观测序列），跟 state 挤在同一个
+// 定时器里会让每次快照都变慢。延迟也放长，输一盘棋不差这几秒。
+let ledgerTimer = null;
+function saveLedgerSoon() {
+  if (ledgerTimer) return;
+  ledgerTimer = setTimeout(() => {
+    ledgerTimer = null;
+    try {
+      fs.mkdirSync(DATA_DIR, { recursive: true });
+      fs.writeFileSync(LEDGER_FILE, JSON.stringify(state.ledger));
+    } catch (e) { console.warn('[ledger] 写入失败：', e.message); }
+  }, 4000);
 }
 
 // ------------------------------------------------------------------ 扫描主流程
@@ -188,6 +213,18 @@ async function scan() {
     }
 
     out.sort((a, b) => b.score - a.score);
+
+    // 信号账本：把本轮榜单原样喂进去 —— 记录开仓快照、结算到点的信号、推进榜单指数。
+    // 用的是本轮已经拉到的行情，所以常规路径上是零额外请求。
+    const lo = Ledger.observe(state.ledger, out, now);
+    // 已经到点、但本轮榜单里已经没有的标的（多半是掉出榜单或池子变淡），
+    // 按 key 批量补一次价格再结算，否则这批会永远停在「待结算」。
+    if (lo.needPrices.length) {
+      const filled = await backfillPrices(lo.needPrices, Date.now());
+      if (filled) log(`账本补价：待补 ${lo.needPrices.length} 个，补上并结算 ${filled} 个视界`);
+    }
+    saveLedgerSoon();
+
     state.tokens = out;
     state.lastScanAt = now;
     state.lastScanMs = now - t0;
@@ -199,7 +236,7 @@ async function scan() {
       poolsScored: out.length,
       dexscreener: 'ok',
     };
-    log(`完成：${out.length} 个标的，用时 ${state.lastScanMs}ms`);
+    log(`完成：${out.length} 个标的，用时 ${state.lastScanMs}ms ｜ 账本 开仓 +${lo.opened} 结算 +${lo.settled}`);
 
     try {
       fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -217,8 +254,44 @@ async function scan() {
   }
 }
 
-/** 迷你走势：把历史压成 [[ts,price],...] 供前端画 sparkline */
-function sparkOf(hist) {
+/**
+ * 为「已到点但不在本轮榜单里」的信号补一次价格。
+ *
+ * 传进来的是账本内部 key（chainId:小写地址），但真正拿去查询时必须用信号里
+ * 存的原始 tokenAddress —— Solana 的 base58 地址区分大小写，用小写 key 去查会查不到。
+ */
+async function backfillPrices(keys, now) {
+  const byKey = {};
+  for (const id of Object.keys(state.ledger.signals)) {
+    const s = state.ledger.signals[id];
+    if (s && s.k && s.tokenAddress && !byKey[s.k]) byKey[s.k] = s.tokenAddress;
+  }
+  const addrs = keys.slice(0, MAX_BACKFILL).map((k) => byKey[k]).filter(Boolean);
+  if (!addrs.length) return 0;
+
+  let pairs = [];
+  try { pairs = await S.dexTokens(addrs); } catch (e) { return 0; }
+
+  // 同一个代币可能有多个池，与主流程同一口径取最有代表性的那个
+  const grouped = new Map();
+  for (const p of pairs) {
+    const a = p.baseToken && p.baseToken.address;
+    if (!a) continue;
+    const k = keyOf(p.chainId, a);
+    if (!grouped.has(k)) grouped.set(k, []);
+    grouped.get(k).push(p);
+  }
+  const priceMap = {};
+  for (const [k, list] of grouped) {
+    const [chainId] = k.split(':');
+    const pool = S.bestPair(list.filter((p) => p.chainId === chainId));
+    const price = pool ? (Number(pool.priceUsd) || 0) : 0;
+    if (price > 0) priceMap[k] = price;
+  }
+  return Ledger.settle(state.ledger, priceMap, now);
+}
+
+/** 迷你走势：把历史压成 [[ts,price],...] 供前端画 sparkline */function sparkOf(hist) {
   const n = hist.length;
   if (!n) return [];
   const maxPts = 60;
@@ -393,6 +466,16 @@ async function handleApi(req, res, url) {
       watchlist: state.watchlist.length,
       sources: state.sources,
       error: state.lastError,
+      ledger: {
+        signals: Object.keys(state.ledger.signals).length,
+        opened: state.ledger.counts.opened || 0,
+        settled: state.ledger.counts.settled || 0,
+        gaveUp: state.ledger.counts.gaveUp || 0,
+        rounds: state.ledger.counts.rounds || 0,
+        indexPoints: state.ledger.index.length,
+        startedAt: state.ledger.startedAt || 0,
+        lastTs: state.ledger.lastTs || 0,
+      },
     });
   }
 
@@ -420,6 +503,35 @@ async function handleApi(req, res, url) {
       error: state.lastError,
       tokens: list,
     });
+  }
+
+  // 抓龙胜率：信号账本的前瞻回测结果。
+  // 不做历史回放（八个因子里有四个在公开历史数据里根本不存在），只报「先记录、后结算」
+  // 的真实样本。胜率、榜单指数基准、样本流失率三个数必须同时给出，缺一个都会误导。
+  if (p === '/api/backtest') {
+    const opts = {
+      horizon: url.searchParams.get('horizon') || '1h',
+      why: url.searchParams.get('why') || 'all',
+      chain: url.searchParams.get('chain') || '',
+    };
+    return send(res, 200, {
+      summary: Ledger.summarize(state.ledger, opts),
+      // state=all：明细要能看到流失与待结算的标的（页面上有独立的状态列），
+      // 但胜率的分母只取已结算，这一点由 summarize 统一保证。
+      samples: Ledger.samples(state.ledger, { ...opts, state: 'all', limit: Math.min(200, Number(url.searchParams.get('limit') || 60)) }),
+      series: Ledger.indexSeries(state.ledger, 160),
+      horizons: Ledger.HORIZONS,
+      whyLabels: Ledger.WHY_LABEL,
+      gradeLabels: Ledger.GRADE_LABEL,
+    });
+  }
+
+  // 清空账本重新开始积累：只是把账本重置，不影响榜单与自选
+  if (p === '/api/backtest/reset') {
+    if (req.method !== 'POST') return send(res, 405, { error: 'method not allowed' });
+    Ledger.reset(state.ledger);
+    saveLedgerSoon();
+    return send(res, 200, { ok: true, ledger: Ledger.summarize(state.ledger, {}) });
   }
 
   if (p.startsWith('/api/token/')) {
@@ -553,6 +665,19 @@ const server = http.createServer(async (req, res) => {
   serveStatic(req, res, url.pathname);
 });
 
+// 退出时同步落盘。saveStateSoon / saveLedgerSoon 都是 setTimeout，进程一 exit 就再也不会执行，
+// 光调它们等于什么都没写 —— 账本攒了几小时的数据不能就这么丢。
+function flushSync() {
+  if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; }
+  if (ledgerTimer) { clearTimeout(ledgerTimer); ledgerTimer = null; }
+  try {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    fs.writeFileSync(STATE_FILE, JSON.stringify({ watchlist: state.watchlist, history: state.history, snapshots: state.snapshots, checkupPrev: state.checkupPrev }));
+    fs.writeFileSync(LEDGER_FILE, JSON.stringify(state.ledger));
+    console.log('[state] 已同步落盘（state.json、ledger.json）');
+  } catch (e) { console.warn('[state] 退出落盘失败：', e.message); }
+}
+
 // ------------------------------------------------------------------ 启动
 function main() {
   loadState();
@@ -563,13 +688,14 @@ function main() {
   server.listen(PORT, '127.0.0.1', () => {
     console.log(`抓龙雷达已启动： http://127.0.0.1:${PORT}`);
     console.log(`扫描间隔 ${SCAN_INTERVAL_MS / 1000}s ｜ 自选 ${state.watchlist.length} 个`);
+    console.log(`信号账本：已有 ${Object.keys(state.ledger.signals).length} 个信号，${state.ledger.index.length} 个指数点`);
     scan().then((r) => console.log('[scan] 首轮结果', r));
     setInterval(() => { scan(); }, SCAN_INTERVAL_MS);
   });
-  process.on('SIGINT', () => { saveStateSoon(); process.exit(0); });
-  process.on('SIGTERM', () => { saveStateSoon(); process.exit(0); });
+  process.on('SIGINT', () => { flushSync(); process.exit(0); });
+  process.on('SIGTERM', () => { flushSync(); process.exit(0); });
 }
 
 if (require.main === module) main();
 
-module.exports = { scan, filterTokens, state, server, main };
+module.exports = { scan, filterTokens, state, server, main, flushSync, Ledger };

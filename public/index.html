@@ -22,6 +22,7 @@
     <button data-view="board" type="button">龙虎榜</button>
     <button data-view="track" type="button">追踪 / 抄作业</button>
     <button data-view="model" type="button">龙分模型</button>
+    <button data-view="backtest" type="button">抓龙胜率</button>
   </nav>
 </header>
 
@@ -247,6 +248,94 @@
     </div>
   </section>
 
+  <!-- ============================ 抓龙胜率（信号账本） ============================ -->
+  <section class="section-wrap radar-guide" data-panel="backtest" hidden aria-labelledby="radar-bt-title">
+    <div class="section-heading">
+      <p class="eyebrow">04 / 抓龙胜率</p>
+      <h2 id="radar-bt-title">先记录，后结算 —— 这一页不做历史回放</h2>
+      <p class="section-copy">
+        龙分的八个因子里，只有量能爆发、价格加速度、池龄、市值这几项能从公开历史数据里重建；
+        买卖笔数分布、池子深度、持币地址数、社交与付费推广状态，公开历史里根本不存在。
+        拿现在的值去回放过去，等于把「后来涨了才会变大的成交量」当成入场时的依据 ——
+        那不是回测，是把答案抄进题目。所以这里换一种做法：每个标的第一次出现在榜单上时，
+        把那一刻的真实状态（分数、八因子、市值、深度、池龄）与价格原样记下来；
+        等 15 分钟 / 1 小时 / 6 小时 / 24 小时候，再用那一刻的真实价格结算。
+        信号是先记的，价格是后取的，没有前视偏差。
+      </p>
+    </div>
+
+    <div class="radar-panel">
+      <div class="radar-bt-controls">
+        <div class="radar-bt-group" data-bt-horizons>
+          <span class="radar-bt-lbl">视界</span>
+          <button class="radar-chip" data-horizon="15m" type="button">15 分钟</button>
+          <button class="radar-chip is-active" data-horizon="1h" type="button">1 小时</button>
+          <button class="radar-chip" data-horizon="6h" type="button">6 小时</button>
+          <button class="radar-chip" data-horizon="24h" type="button">24 小时</button>
+        </div>
+        <div class="radar-bt-group" data-bt-whys>
+          <span class="radar-bt-lbl">信号</span>
+          <button class="radar-chip is-active" data-why="all" type="button">全部信号</button>
+          <button class="radar-chip" data-why="first" type="button">首现信号</button>
+          <button class="radar-chip" data-why="upgrade" type="button">档位升级信号</button>
+        </div>
+        <button class="radar-toggle" id="btReset" type="button">清空账本重新积累</button>
+      </div>
+      <p class="radar-note" style="margin-top:8px">
+        「首现信号」＝标的第一次进入榜单；「档位升级信号」＝首次达到龙头候选及以上。
+        两者分开统计，才能看出「雷达发现得早」和「雷达确认得准」哪一头更值钱。
+        账本需要时间积累：15 分钟视界几分钟就能出数，24 小时视界要等一天。
+      </p>
+
+      <div data-bt-body>
+        <div class="radar-skeleton"><i class="w60"></i><i class="w80"></i><i class="w40"></i></div>
+      </div>
+    </div>
+
+    <div class="radar-panel" style="margin-top:18px">
+      <p class="card-index">怎么读这些数</p>
+      <div class="table-wrap">
+        <table class="radar-table">
+          <thead><tr><th style="width:150px">指标</th><th>它回答什么 / 为什么不能单独看</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><b>胜率</b></td>
+              <td>正收益占比。单看它没有意义 —— 如果那段时间全市场都在涨，闭着眼睛买也是高胜率。所以它永远和下面两项绑在一起。</td>
+            </tr>
+            <tr>
+              <td><b>榜单指数基准</b></td>
+              <td>同一时段、同一个榜单里所有连续在榜标的的等权中位收益，连乘成一条参考线。「信号收益 − 同期指数收益」＝中位超额，这才回答「雷达选的比雷达池子的平均强吗」。</td>
+            </tr>
+            <tr>
+              <td><b>样本流失率</b></td>
+              <td>到点却补不到价格的信号。掉出榜单的标的很可能就是归零那批，把它们从分母里抹掉会让胜率系统性虚高，所以单独计数、单独显示。</td>
+            </tr>
+            <tr>
+              <td><b>最大浮亏</b></td>
+              <td>从开仓到结算之间出现过的最差浮亏。只有收益没有回撤，胜率会显得比实际舒服得多 —— 赚 50% 的前提是你先扛住了 −60%。</td>
+            </tr>
+            <tr>
+              <td><b>档位分层</b></td>
+              <td>真龙 / 龙头候选 / 潜龙 / 观察 / 别碰 各自的表现。如果档位越高中位收益反而越低，说明龙分在这段样本上没有区分度 —— 这比胜率本身更值得看。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="radar-legend">
+        <span>结算价必须为正：价格 ≤ 0 一律拒绝结算，避免把「池子没了」记成 0 收益</span>
+        <span>缺基准时超额写「无采样点」，绝不用 0 冒充「与市场持平」</span>
+        <span>样本不足 30 笔只报计数，不给胜率</span>
+        <span>48 小时仍补不到价格记流失，不并入胜率</span>
+      </div>
+      <p class="radar-note">
+        已知偏差，不藏：候选池由推广榜 / 新资料 / 关键词扩样合成，不是全市场，所以这份统计只说明「在这个池子里信号值不值」，
+        不能外推到整个市场。榜单指数偏向活得久的标的，与信号账本面对同一类幸存者问题 —— 两者同向受影响，做比较仍然成立。
+        另外，本地 Node 形态常驻运行时采集是连续的；纯静态部署只在页面打开时采集，关掉的时段没有观测点，
+        到期补不到价格的信号会计入流失而不是被当成中性。数据只存在本机，不上传。
+      </p>
+    </div>
+  </section>
+
   <section class="section-wrap radar-caveat" aria-labelledby="radar-caveat-title">
     <div class="radar-caveat-card">
       <p class="card-index">边界与缺口</p>
@@ -261,6 +350,9 @@
         <li>仓位是风险预算倒推出来的可承受上限，不是建议下单金额。本工具不给买卖点，也不判断你会不会赚钱。</li>
         <li>不连接钱包、不需要任何密钥、不发起交易。你的地址和私钥都不会出现在这一页。</li>
         <li>「可看」的意思是「值得自己去核一遍」，不是「可以买」。真正的风险永远在合约之外。</li>
+        <li>抓龙胜率页报的是「先记录、后结算」的前瞻样本，不是历史回放。它刚上线时样本是空的，要跑够时间才有数字；样本不足 30 笔时页面只报计数，不给胜率。</li>
+        <li>胜率必须与「同期榜单指数基准」和「样本流失率」一起读。单独看胜率，在普涨行情里会高得毫无意义；把归零掉出榜单的标的漏掉，胜率还会更高。</li>
+        <li>账本只统计本工具候选池里的标的，不是全市场。它回答「在这个池子里信号值不值」，不能外推到整个市场。</li>
       </ul>
       <p class="disclaimer">
         免责声明：以上内容基于公开数据和量化分析，仅供参考，不构成投资建议。市场有风险，投资需谨慎。任何投资决策应结合个人风险承受能力、资金状况和投资目标独立判断，必要时咨询持牌专业机构。过往表现不预示未来收益。

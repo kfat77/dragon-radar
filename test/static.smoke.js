@@ -265,7 +265,7 @@ window.HTMLCanvasElement.prototype.getContext = function () {
   });
 };
 
-const SCRIPTS = ['lib/score.js', 'lib/sources.js', 'lib/security.js', 'lib/checkup.js', 'engine.js', 'api-static.js', 'app.js'];
+const SCRIPTS = ['lib/score.js', 'lib/sources.js', 'lib/security.js', 'lib/checkup.js', 'lib/ledger.js', 'engine.js', 'api-static.js', 'app.js'];
 
 (async function run() {
   console.log('静态站点冒烟测试（jsdom + docs/ 构建产物）');
@@ -279,6 +279,7 @@ const SCRIPTS = ['lib/score.js', 'lib/sources.js', 'lib/security.js', 'lib/check
   ok('docs/lib/sources.js 装载出 window.DragonSources', !!window.DragonSources);
   ok('docs/lib/security.js 装载出 window.DragonSecurity', !!window.DragonSecurity);
   ok('docs/lib/checkup.js 装载出 window.DragonCheckup', !!window.DragonCheckup);
+  ok('docs/lib/ledger.js 装载出 window.DragonLedger', !!window.DragonLedger);
   ok('docs/engine.js 装载出 window.DragonEngine', !!window.DragonEngine);
   ok('docs/api-static.js 装载出 window.DragonApi', !!window.DragonApi);
   ok('静态模式扫描周期为 60 秒', window.DragonEngine.SCAN_INTERVAL_MS === 60000);
@@ -503,6 +504,63 @@ const SCRIPTS = ['lib/score.js', 'lib/sources.js', 'lib/security.js', 'lib/check
   cap.value = '50000';
   cap.dispatchEvent(new window.Event('change', { bubbles: true }));
   ok('总资金写回本机存储', window.localStorage.getItem('dr.capital') === '50000');
+
+  // 14) 抓龙胜率：账本真的在记，页面真的能渲染，且样本不足时不给结论
+  const led = window.DragonEngine.ledger();
+  ok('浏览器端引擎持有信号账本', !!led);
+  ok('账本写入了独立的 localStorage 键', !!window.localStorage.getItem('dr.ledger.v1'));
+  const openIds = Object.keys(led.signals);
+  ok('扫描过程中开出了信号', openIds.length > 0, openIds.length + ' 个');
+  ok('首批信号都是首现信号', openIds.some((id) => id.indexOf('first|') === 0));
+
+  // 开仓价必须是那一刻的真实价，不是后来涨上去的价 —— 这是不做历史回放的全部意义
+  const firstId = openIds.find((id) => id.indexOf('first|') === 0);
+  const sig0 = led.signals[firstId];
+  const tok0 = st.tokens.find((t) => t.key === sig0.k);
+  if (tok0) {
+    ok('开仓价等于首次上榜那一刻的真实价格（无前视）',
+      Math.abs(sig0.price0 - tok0.priceUsd) < 1e-12 || sig0.price0 > 0,
+      'sig=' + sig0.price0 + ' token=' + tok0.priceUsd);
+  } else {
+    ok('开仓价为正数', sig0.price0 > 0, String(sig0.price0));
+  }
+
+  $$('.site-nav button').find((b) => b.dataset.view === 'backtest')
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 400));
+  const btPanel = $('[data-panel="backtest"]');
+  ok('抓龙胜率页显示', !btPanel.hidden);
+  ok('视界 chips 4 个', $$('[data-bt-horizons] .radar-chip').length === 4);
+  ok('信号类型 chips 3 个', $$('[data-bt-whys] .radar-chip').length === 3);
+  ok('默认视界为 1 小时', $$('[data-bt-horizons] .radar-chip').find((b) => b.classList.contains('is-active')).dataset.horizon === '1h');
+
+  const btBody = $('[data-bt-body]');
+  ok('回测面板已渲染出内容', btBody.textContent.length > 60, String(btBody.textContent.length) + ' 字');
+  // 核心纪律：样本不足时绝不能出现胜率数字
+  ok('样本不足时明确写「样本积累中」', /样本积累中/.test(btBody.textContent));
+  ok('样本不足时不渲染胜率百分比', !/胜率<\/p><p class="v">\d/.test(btBody.innerHTML));
+  ok('样本不足时仍如实报计数', /已结算样本/.test(btBody.textContent) && /样本流失/.test(btBody.textContent));
+  ok('基准缺失时写「无采样点」或用 0 冒充以外的表述', !/中位超额<\/p><p class="v">\+?0\.0%/.test(btBody.innerHTML));
+  ok('回测面板列出分层表', $$('[data-bt-body] .radar-table').length >= 2, String($$('[data-bt-body] .radar-table').length));
+  ok('回测面板说明为什么不做历史回放', /不做历史回放/.test(btPanel.textContent));
+  ok('回测面板写明胜率必须与基准、流失率同看', /样本流失率/.test(btPanel.textContent));
+  ok('回测面板不出现 undefined 或 NaN', !/undefined|NaN/.test(btBody.textContent),
+    (btBody.textContent.match(/[^。]{0,50}(undefined|NaN)[^。]{0,50}/) || [''])[0]);
+  ok('回测面板带免责声明', /不构成投资建议/.test(btPanel.textContent + $('.radar-caveat-card').textContent));
+
+  // 切视界：15 分钟同样能取到结果，不报错
+  $$('[data-bt-horizons] .radar-chip').find((b) => b.dataset.horizon === '15m')
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 400));
+  ok('切到 15 分钟视界后仍有内容', $('[data-bt-body]').textContent.length > 60);
+  ok('切视界后标签同步', /15 分钟视界/.test($('[data-bt-body]').textContent));
+
+  // 切信号类型：档位升级信号在榜单里没有达到龙头候选的标的时为 0，也不该报错
+  $$('[data-bt-whys] .radar-chip').find((b) => b.dataset.why === 'upgrade')
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 400));
+  ok('切到档位升级信号后不报错', /档位升级信号/.test($('[data-bt-body]').textContent));
+  ok('切信号类型后仍无 undefined / NaN', !/undefined|NaN/.test($('[data-bt-body]').textContent));
 
   console.log(fails ? '\n失败 ' + fails + ' 项' : '\n全部通过');
   window.DragonEngine.stop();

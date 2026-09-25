@@ -12,12 +12,17 @@
 
   var S = root.DragonSources;
   var SC = root.DragonScore;
+  // 账本（lib/ledger.js）缺失时引擎照常跑，只是没有回测；不让它成为整站的硬依赖。
+  var L = root.DragonLedger || null;
   if (!S || !SC) throw new Error('DragonEngine 需要先加载 lib/sources.js 与 lib/score.js');
 
   var KEY = 'dr.static.v1';
+  // 账本单独存一份：它比榜单快照大得多，混在同一个 key 里任何一次写入都会顶到配额。
+  var LEDGER_KEY = 'dr.ledger.v1';
   var SCAN_INTERVAL_MS = 60000;
   var MAX_HISTORY = 90;
   var MAX_TOKENS = 260;
+  var MAX_BACKFILL = 120;          // 单轮最多为多少个待结算信号补价
 
   var state = {
     tokens: [],
@@ -97,6 +102,44 @@
         return t;
       });
     } catch (e) { /* 缓存损坏则忽略，重新扫描即可 */ }
+  }
+
+  // ------------------------------------------------------------- 信号账本
+  /**
+   * 前瞻记录 + 事后结算。要说清一个静态形态固有的局限：只有页面开着的时候才在采集，
+   * 关闭的那段时间没有观测点。到期时补不到价格的信号会被记成「流失」，页面上如实显示，
+   * 不会悄悄从分母里消失。想要连续采集请用 Node 形态（npm start）常驻运行。
+   */
+  var ledger = L ? L.create() : null;
+  var lastLedgerSave = 0;
+
+  function saveLedger() {
+    if (!ledger || !L) return;
+    var now = Date.now();
+    // 账本比榜单快照大得多，不必每轮序列化一次
+    if (now - lastLedgerSave < 60000) return;
+    lastLedgerSave = now;
+    try {
+      localStorage.setItem(LEDGER_KEY, JSON.stringify(ledger));
+    } catch (e) {
+      // 配额超限：退化为只留信号与指数，丢掉观测序列。
+      // 结算与胜率仍然可用，只失去「最大不利偏移」与「掉榜回补」两条路径。
+      try {
+        localStorage.setItem(LEDGER_KEY, JSON.stringify({
+          v: ledger.v, startedAt: ledger.startedAt, lastTs: ledger.lastTs, seq: ledger.seq,
+          signals: ledger.signals, index: ledger.index, indexLevel: ledger.indexLevel,
+          prev: ledger.prev, counts: ledger.counts,
+        }));
+      } catch (e2) { /* 浏览器禁用或实在存不下，就只留在内存里 */ }
+    }
+  }
+
+  function loadLedger() {
+    if (!L) return;
+    var raw = null;
+    try { raw = localStorage.getItem(LEDGER_KEY); } catch (e) { raw = null; }
+    if (!raw) return;
+    try { ledger = L.normalize(JSON.parse(raw)); } catch (e) { ledger = L.create(); }
   }
 
   // ------------------------------------------------------------- 扫描
@@ -220,6 +263,19 @@
       });
 
       out.sort(function (a, b) { return b.score - a.score; });
+
+      // 信号账本：用本轮已经拿到的行情记录快照 / 结算到点的信号 / 推进榜单指数，
+      // 常规路径零额外请求。needPrices 非空时才对外补一次价格。
+      if (ledger && L) {
+        var lo = L.observe(ledger, out, now);
+        if (lo.needPrices.length) {
+          var filled = await backfillPrices(lo.needPrices, Date.now());
+          if (filled) log('账本补价：待补 ' + lo.needPrices.length + ' 个，补上并结算 ' + filled + ' 个视界');
+        }
+        saveLedger();
+        log('账本：开仓 +' + lo.opened + '，结算 +' + lo.settled);
+      }
+
       state.tokens = out;
       state.lastScanAt = now;
       state.lastScanMs = now - t0;
@@ -242,6 +298,76 @@
       state.scanning = false;
       emit();
     }
+  }
+
+  /**
+   * 为「已到点但不在本轮榜单里」的信号补一次价格。
+   * 账本内部的 key 是小写化的地址，但查询必须用信号里存的原始 tokenAddress ——
+   * Solana 的 base58 地址区分大小写，用小写 key 去查会查不到。
+   */
+  async function backfillPrices(keys, now) {
+    if (!ledger) return 0;
+    var byKey = {};
+    Object.keys(ledger.signals).forEach(function (id) {
+      var s = ledger.signals[id];
+      if (s && s.k && s.tokenAddress && !byKey[s.k]) byKey[s.k] = s.tokenAddress;
+    });
+    var addrs = keys.slice(0, MAX_BACKFILL).map(function (k) { return byKey[k]; })
+      .filter(function (a) { return !!a; });
+    if (!addrs.length) return 0;
+
+    var pairs = [];
+    try { pairs = await S.dexTokens(addrs); } catch (e) { return 0; }
+
+    // 同一代币多个池，与主流程同口径取最有代表性的那个
+    var grouped = {};
+    pairs.forEach(function (p) {
+      var a = p.baseToken && p.baseToken.address;
+      if (!a) return;
+      var k = keyOf(p.chainId, a);
+      (grouped[k] || (grouped[k] = [])).push(p);
+    });
+    var priceMap = {};
+    Object.keys(grouped).forEach(function (k) {
+      var chainId = k.split(':')[0];
+      var pool = S.bestPair(grouped[k].filter(function (p) { return p.chainId === chainId; }));
+      var price = pool ? (Number(pool.priceUsd) || 0) : 0;
+      if (price > 0) priceMap[k] = price;
+    });
+    return L.settle(ledger, priceMap, now);
+  }
+
+  /** 回测视图的数据源：汇总 + 样本明细 + 指数曲线 */
+  function backtest(opts) {
+    opts = opts || {};
+    if (!ledger || !L) {
+      return {
+        available: false,
+        error: '未加载 lib/ledger.js，回测不可用',
+        summary: null, samples: [], series: [], horizons: [], whyLabels: {}, gradeLabels: {},
+      };
+    }
+    var o = { horizon: opts.horizon || '1h', why: opts.why || 'all', chain: opts.chain || '' };
+    return {
+      available: true,
+      summary: L.summarize(ledger, o),
+      // state=all：明细带上流失与待结算的行（页面有独立状态列），
+      // 胜率分母只取已结算，由 summarize 保证。
+      samples: L.samples(ledger, { horizon: o.horizon, why: o.why, chain: o.chain, state: 'all', limit: Math.min(200, Number(opts.limit || 60)) }),
+      series: L.indexSeries(ledger, 160),
+      horizons: L.HORIZONS,
+      whyLabels: L.WHY_LABEL,
+      gradeLabels: L.GRADE_LABEL,
+    };
+  }
+
+  function resetBacktest() {
+    if (!ledger || !L) return false;
+    L.reset(ledger);
+    lastLedgerSave = 0;
+    saveLedger();
+    emit();
+    return true;
   }
 
   // ------------------------------------------------------------- 查询
@@ -454,6 +580,7 @@
   var timer = null;
   function start() {
     load();
+    loadLedger();
     runScan({ log: function (m) { if (root.console) console.log('[scan] ' + m); } });
     timer = setInterval(function () { runScan(); }, SCAN_INTERVAL_MS);
   }
@@ -478,5 +605,8 @@
     clearCheckups: clearCheckups,
     checkupPrev: function () { return checkupPrev; },
     checkups: function () { return checkupCache; },
+    backtest: backtest,
+    resetBacktest: resetBacktest,
+    ledger: function () { return ledger; },
   };
 })(typeof self !== 'undefined' ? self : this);

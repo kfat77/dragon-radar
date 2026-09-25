@@ -6,8 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "build:static": "node tools/build-static.js",
-    "test": "node test/score.test.js && node test/checkup.test.js && node test/engine.test.js",
+    "test": "node test/score.test.js && node test/checkup.test.js && node test/ledger.test.js && node test/engine.test.js",
     "test:checkup": "node test/checkup.test.js",
+    "test:ledger": "node test/ledger.test.js",
     "test:frontend": "node test/frontend.smoke.js",
     "test:static": "node test/static.smoke.js",
     "test:live": "node test/live.verify.js",

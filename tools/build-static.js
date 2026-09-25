@@ -7,6 +7,7 @@
  *   lib/sources.js    -> docs/lib/sources.js   公开数据源封装
  *   lib/security.js   -> docs/lib/security.js  合约安全 / 筹码 / 仿盘
  *   lib/checkup.js    -> docs/lib/checkup.js   四维体检模型
+ *   lib/ledger.js     -> docs/lib/ledger.js    信号账本与前瞻回测
  *   src/engine.js     -> docs/engine.js        浏览器端引擎
  *   src/static-api.js -> docs/api-static.js    /api/* 适配层
  *   public/app.js     -> docs/app.js           渲染层（与 Node 形态同一份）
@@ -33,6 +34,7 @@ const STATIC_SCRIPTS = [
   '<script src="./lib/sources.js"></script>',
   '<script src="./lib/security.js"></script>',
   '<script src="./lib/checkup.js"></script>',
+  '<script src="./lib/ledger.js"></script>',
   '<script src="./engine.js"></script>',
   '<script src="./api-static.js"></script>',
   '<script src="./app.js"></script>',
@@ -67,6 +69,7 @@ function main() {
   written.push(copy('lib/sources.js', path.join(DOCS, 'lib/sources.js')));
   written.push(copy('lib/security.js', path.join(DOCS, 'lib/security.js')));
   written.push(copy('lib/checkup.js', path.join(DOCS, 'lib/checkup.js')));
+  written.push(copy('lib/ledger.js', path.join(DOCS, 'lib/ledger.js')));
   written.push(copy('src/engine.js', path.join(DOCS, 'engine.js')));
   written.push(copy('src/static-api.js', path.join(DOCS, 'api-static.js')));
   written.push(copy('public/style.css', path.join(DOCS, 'style.css')));

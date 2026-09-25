@@ -1,8 +1,8 @@
 # 抓龙雷达 / Dragon Radar
 
-全链新池公开数据扫描器 + 可解释龙分模型 + 跟车监控与持仓账本。零运行时依赖。
-An on-chain new-pool scanner with an explainable Dragon Score model, plus position
-tracking. Zero runtime dependencies.
+全链新池公开数据扫描器 + 可解释龙分模型 + 四维体检 + 抓龙胜率前瞻账本。零运行时依赖。
+An on-chain new-pool scanner with an explainable Dragon Score model, a four-dimension checkup,
+and a forward signal ledger that measures its own hit rate. Zero runtime dependencies.
 
 在线访问 / Live site: <https://kfat77.github.io/dragon-radar/>
 
@@ -15,6 +15,7 @@ tracking. Zero runtime dependencies.
   - [二、核心功能](#二核心功能)
   - [三、龙分模型](#三龙分模型)
   - [三之二、四维体检（安全 / 叙事 / 筹码 / 位置）](#三之二四维体检安全--叙事--筹码--位置)
+  - [三之三、抓龙胜率（信号账本与前瞻回测）](#三之三抓龙胜率信号账本与前瞻回测)
   - [四、环境要求](#四环境要求)
   - [五、安装与启动](#五安装与启动)
   - [六、日常使用说明](#六日常使用说明)
@@ -31,6 +32,7 @@ tracking. Zero runtime dependencies.
   - [2. Core Features](#2-core-features)
   - [3. The Dragon Score](#3-the-dragon-score)
   - [3b. Four-Dimension Checkup (Safety / Narrative / Chips / Position)](#3b-four-dimension-checkup-safety--narrative--chips--position)
+  - [3c. Hit Rate (Signal Ledger and Forward Test)](#3c-hit-rate-signal-ledger-and-forward-test)
   - [4. Requirements](#4-requirements)
   - [5. Install and Run](#5-install-and-run)
   - [6. Daily Usage](#6-daily-usage)
@@ -89,6 +91,10 @@ tracking. Zero runtime dependencies.
   合约能不能碰（安全，一票否决）、故事还传不传得动（叙事，五个传播阶段）、
   筹码在谁手里（集中度 × 退出通道宽窄）、现在该不该进与该进多少（位置，风险预算倒推仓位）。
   结果带综合分与六档结论，并给出分批计划与离场条件。详见第三之二节。
+- **抓龙胜率（信号账本）。** 不做历史回放（八个因子里有四个在公开历史数据里根本不存在），
+  改成前瞻记录加事后结算：标的首次上榜时记下当时的状态与价格，等 15 分钟 / 1 小时 / 6 小时 /
+  24 小时候用真实价格结算。胜率、同期榜单指数基准、样本流失率三件事必须一起读。
+  详见第三之三节。
 - **自选清单。** 加入自选的标的每轮固定进候选池，不受质量地板限制，存在浏览器本地。
 - **手动持仓账本。** 填合约地址、成本价、数量，用实时报价算浮动盈亏（红涨绿跌）。
 - **跟车监控。** 复刻 fomo.family 个人主页结构。该站的实时持仓与成交需要登录态令牌，
@@ -305,6 +311,93 @@ RugCheck 全量报告补齐持币地址数、前 20 持有人与 insider 标记�
 三个风控接口都返回 CORS 允许头，纯静态部署（GitHub Pages）可以在浏览器里直接调用，
 不需要服务端代理。因此体检在本地服务形态与静态形态下的行为一致。
 
+## 三之三、抓龙胜率（信号账本与前瞻回测）
+
+页面上的「抓龙胜率」回答一个问题：雷达给出的信号，事后到底赚不赚钱。
+
+### 3c.1 为什么不做历史回放
+
+先说清楚这一条，因为它决定了整个模块的形态。
+
+龙分的八个因子里，只有量能爆发、价格加速度、池龄、市值这几项能从公开历史数据重建；
+**买卖笔数分布、池子深度、持币地址数、社交与付费推广状态，在任何公开历史接口里都不存在。**
+拿今天的值去回放昨天的价格，等于把「后来涨了才会变大的成交量」当成入场时的依据 ——
+那不是回测，是把答案抄进题目。所以本项目不做历史回放，也不提供任何形式的
+「过去一年信号收益」曲线。
+
+替代方案是**前瞻记录 + 事后结算**：
+
+1. 每个标的第一次出现在榜单上时，把那一刻的真实状态（龙分、八个因子分、市值、池子深度、
+   池龄、置信度、风险扣分）连同当时的真实价格原样记下来，叫「首现信号」。
+2. 当标的首次达到「龙头候选」及以上时，再记一条「档位升级信号」。两种信号分开统计，
+   才能看出「雷达发现得早」和「雷达确认得准」哪一头更值钱。
+3. 等 15 分钟 / 1 小时 / 6 小时 / 24 小时四个视界到点后，用那一刻的真实价格结算。
+   **信号是先记的，价格是后取的**，没有前视偏差。
+
+### 3c.2 三个必须同时给出的数
+
+单独一个胜率数字是可以被做得很漂亮的，所以本模块把三件事绑在一起输出，页面上不给单独取用的机会。
+
+| 指标 | 它回答什么 | 缺了它会怎样 |
+| --- | --- | --- |
+| 胜率 | 已结算样本里正收益的占比 | 那段时间全市场普涨时，闭着眼睛买也是高胜率 |
+| 榜单指数基准 | 同一时段、同一榜单里所有连续在榜标的的等权中位收益，连乘成参考线 | 无法区分「雷达选得准」和「那阵子全市场在涨」 |
+| 样本流失率 | 到点却补不到价格的信号数 | 掉出榜单的标的很可能就是归零那批，悄悄抹掉会让胜率系统性虚高 |
+
+**超额收益 = 信号收益 − 同期榜单指数收益。** 这才回答「雷达选的比雷达池子的平均强吗」。
+
+### 3c.3 四条不退让的口径
+
+- **价格必须为正才结算。** `priceUsd <= 0` 一律拒绝结算，开仓时也不开。链上行情里的 0 与负数
+  代表池子没了或取数出错，把它当成 0% 收益，等于把最危险的那一类结局记成「不亏不赚」。
+- **缺基准必须显式缺。** 区间内没有指数采样点时，超额写成「无采样点」，绝不填 0。
+  填 0 会被读成「与市场持平」，那是一个看起来像结论的假数字。
+- **样本不足不给结论。** 已结算样本少于 30 笔时，页面只显示计数与「样本积累中」，
+  不渲染胜率、中位收益与超额。
+- **流失单独统计。** 到期后 48 小时仍补不到价格记流失，单独计数、单独显示，不并入胜率分母，
+  也不当成中性收益。
+
+此外还会记录**最大不利偏移**（从开仓到结算之间出现过的最差浮亏）并给出分位分布。
+只有收益数字没有回撤数字，胜率会显得比实际舒服得多 —— 赚 50% 的前提是先扛住 −60%。
+
+### 3c.4 榜单指数怎么算
+
+每一轮取「上一轮与这一轮都在榜」的标的，算各自的轮间收益，取中位数，再连乘成净值曲线。
+单轮涨跌超过 10 倍的点会被剔除（数据源把价格单位换了会一次把整条线拉飞）。
+
+已知口径限制，不藏：新进榜的标的当轮没有上一轮价格，不计入；掉出榜单的标的在最后一轮之后
+不再计入。所以它偏向「活得久」的那批，与信号账本面对的是同一类幸存者问题 ——
+但两者同向受影响，做比较仍然成立。
+
+### 3c.5 怎么用
+
+账本是一门需要时间积累的账。数字是一点点攒出来的，**刚部署时它是空的，这是设计而不是故障**。
+
+```bash
+npm start                                # 服务跑起来后，每轮扫描自动记账
+node tools/ledger-report.js              # 另开一个终端，随时看进度（离线读 data/ledger.json）
+node tools/ledger-report.js --horizon=1h # 只看 1 小时视界
+node tools/ledger-report.js --why=upgrade --chain=solana
+```
+
+页面侧：导航「抓龙胜率」，可切换视界（15 分钟 / 1 小时 / 6 小时 / 24 小时）与信号类型
+（全部 / 首现 / 档位升级）。两者用的是同一个 `lib/ledger.js`，结论一致。
+
+参考时间线：15 分钟视界在半小时内就能攒到足够样本；1 小时视界约 1 小时；
+6 小时与 24 小时视界要按各自周期等待。24 小时视界要整整一天。
+
+**纯静态部署的固有限制：** 静态形态只在页面打开时采集，关掉的时段没有观测点。
+到期补不到价格的信号会计入流失，而不是被当成中性。要连续采集请用 Node 形态常驻运行。
+
+### 3c.6 已知偏差
+
+- 候选池由推广榜 / 最新代币资料 / 关键词扩样 / 自选合成，**不是全市场**。
+  这份统计只说明「在这个池子里信号值不值」，不能外推到整个市场。
+- 榜单指数偏向活得久的标的（见 3c.4）。
+- 结算用的是 DexScreener 的公开报价，不是可成交价。真实成交还要扣滑点与手续费，
+  所以这里报的是**信号的方向性收益**，不是可实现收益。
+- 15 分钟视界的噪声最大；样本量相同时，越长的视界越可靠，但积样本也越慢。
+
 ## 四、环境要求
 
 - **Node.js 18 或以上**（推荐 20 LTS）。低版本没有全局 `fetch`，服务与浏览器端引擎都无法运行。
@@ -354,8 +447,9 @@ npm run serve:static     # 起一个只读静态服务，默认 8080
 ### 5.3 分开跑测试
 
 ```bash
-npm test                 # 零依赖单测（打分模型 + 四维体检 + 浏览器端引擎），不需要网络
+npm test                 # 零依赖单测（打分模型 + 四维体检 + 信号账本 + 浏览器端引擎），不需要网络
 npm run test:checkup     # 只跑四维体检模型单测
+npm run test:ledger      # 只跑信号账本与回测模型单测
 npm run test:frontend    # 前端冒烟，需要先在 127.0.0.1:8791 起服务
 node test/static.smoke.js  # 静态站冒烟，需要 jsdom
 npm run test:live        # 线上产物验证，需要联网与 jsdom，交付前跑
@@ -386,6 +480,19 @@ npm run test:live        # 线上产物验证，需要联网与 jsdom，交付�
    成本价用美元计价，数量留空按 1 计算。
 9. **看模型说明。** 「龙分模型」页列出四个读法与完整因子权重表，以及四维体检的口径，
    方便核对页面上的分数与结论是怎么来的。
+10. **看抓龙胜率。** 「抓龙胜率」页读的是信号账本：标的首次上榜时记下当时的状态与价格，
+    之后按 15 分钟 / 1 小时 / 6 小时 / 24 小时四个视界到点结算。可切视界与信号类型
+    （全部 / 首现 / 档位升级）。**刚部署时这一页是空的，这是设计而不是故障** ——
+    数字要一点点攒。不想开页面时，用一个离线命令看进度：
+
+    ```bash
+    node tools/ledger-report.js               # 读取 data/ledger.json 并打印全部视界
+    node tools/ledger-report.js --horizon=1h  # 只看某个视界
+    node tools/ledger-report.js --why=upgrade --chain=solana
+    ```
+
+    读这一页时必须三件事一起看：胜率、同期榜单指数基准、样本流失率。理由见第三之三节。
+    另外，本页的胜率是**信号的方向性收益**，不含滑点与手续费，不是可实现收益。
 
 自动更新默认开启。关闭后页面不再定时重取，需要手动点「刷新这一轮」。
 
@@ -400,7 +507,8 @@ dragon-radar/
 │   ├── score.js           龙分模型（同构模块：Node require / 浏览器 window.DragonScore）
 │   ├── sources.js         行情数据源封装（同上，window.DragonSources）
 │   ├── security.js        合约安全 / 筹码 / 仿盘数据层（window.DragonSecurity）
-│   └── checkup.js         四维体检模型，纯函数（window.DragonCheckup）
+│   ├── checkup.js         四维体检模型，纯函数（window.DragonCheckup）
+│   └── ledger.js          信号账本与前瞻回测，纯函数（window.DragonLedger）
 ├── src/
 │   ├── engine.js          浏览器端引擎：静态形态下的扫描编排（window.DragonEngine）
 │   └── static-api.js      把 /api/* 翻译成引擎调用（window.DragonApi）
@@ -411,10 +519,12 @@ dragon-radar/
 ├── docs/                  GitHub Pages 静态站（构建产物，由 tools/build-static.js 生成）
 ├── tools/
 │   ├── build-static.js    组装 docs/
-│   └── serve-static.js    本地预览 docs/
+│   ├── serve-static.js    本地预览 docs/
+│   └── ledger-report.js   离线读账本，打印抓龙胜率报告
 ├── test/
 │   ├── score.test.js      打分模型单测（零依赖）
 │   ├── checkup.test.js    四维体检模型单测（零依赖）
+│   ├── ledger.test.js     信号账本与回测模型单测（零依赖）
 │   ├── engine.test.js     浏览器端引擎 + 适配层集成测试（零依赖）
 │   ├── frontend.smoke.js  服务形态前端冒烟（需服务在跑 + jsdom）
 │   ├── static.smoke.js    静态站冒烟（需 jsdom）
@@ -442,6 +552,7 @@ dragon-radar/
 | `lib/sources.js` | DexScreener / GeckoTerminal / fomo.family 数据源封装 |
 | `lib/security.js` | GoPlus / honeypot.is / RugCheck 合约安全与筹码数据层 |
 | `lib/checkup.js` | 四维体检模型（安全 / 叙事 / 筹码 / 位置），纯函数，不联网 |
+| `lib/ledger.js` | 信号账本与前瞻回测模型（开仓快照 / 到点结算 / 榜单指数 / 统计），纯函数，不联网 |
 | `src/engine.js` | 浏览器端扫描引擎 |
 | `src/static-api.js` | 静态形态的 `/api/*` 适配层 |
 | `public/index.html` | 页面骨架（含 `build:scripts` 脚本注入位） |
@@ -456,11 +567,14 @@ dragon-radar/
 | `docs/lib/sources.js` | 构建产物：数据源封装 |
 | `docs/lib/security.js` | 构建产物：合约安全与筹码数据层 |
 | `docs/lib/checkup.js` | 构建产物：四维体检模型 |
+| `docs/lib/ledger.js` | 构建产物：信号账本与回测模型 |
 | `docs/.nojekyll` | 让 GitHub Pages 跳过 Jekyll 处理 |
 | `tools/build-static.js` | 静态站构建脚本 |
 | `tools/serve-static.js` | 静态站本地预览服务 |
+| `tools/ledger-report.js` | 离线读 `data/ledger.json` 并打印抓龙胜率报告（只读） |
 | `test/score.test.js` | 打分模型单测 |
 | `test/checkup.test.js` | 四维体检模型单测 |
+| `test/ledger.test.js` | 信号账本与回测模型单测 |
 | `test/engine.test.js` | 引擎与适配层集成测试 |
 | `test/frontend.smoke.js` | 服务形态前端冒烟测试 |
 | `test/static.smoke.js` | 静态站冒烟测试 |
@@ -474,12 +588,14 @@ dragon-radar/
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/health` | 运行状态：扫描次数、标的数、数据源统计、错误信息 |
+| GET | `/api/health` | 运行状态：扫描次数、标的数、数据源统计、账本计数、错误信息 |
 | GET | `/api/meta` | 链清单、默认链、因子权重、分级口径、扫描间隔 |
 | GET | `/api/radar` | 榜单。参数 `chain`、`view`、`sort`、`q`、`minLiq`、`limit` |
 | GET | `/api/token/:chainId/:address` | 单币详情；榜单里没有则现拉一次行情并单独打分 |
 | GET | `/api/checkup/:chainId/:address` | 四维体检。参数 `capital`（用于仓位倒推，默认 10000）、`force=1` 绕过缓存。结果缓存 6 小时（深检 24 小时） |
 | GET | `/api/price?address=` | 单币实时报价，缓存 30 秒 |
+| GET | `/api/backtest` | 抓龙胜率。参数 `horizon`（`15m` / `1h` / `6h` / `24h`，默认 `1h`）、`why`（`all` / `first` / `upgrade`）、`chain`、`limit`。返回汇总、样本明细、指数曲线与口径常量 |
+| POST | `/api/backtest/reset` | 清空信号账本重新积累（不影响榜单与自选） |
 | GET | `/api/watchlist` | 读取自选清单 |
 | POST | `/api/watchlist` | 加入自选，JSON 体 `{ tokenAddress, chainId, symbol }` |
 | DELETE | `/api/watchlist?address=&chainId=` | 移出自选 |
@@ -504,23 +620,32 @@ npm test
   最小值、止损距离随阶段变化、阶段系数与致命项归零；缺数据时数值字段必须显式置空
   （不能留成 undefined，那会被渲染成「前十大 undefined%」这种像结论的东西）；
   以及任意夹具组合下不产生 NaN 或越界值。
-- `test/engine.test.js`：76 项通过。在进程内伪造 `self` / `localStorage` / `fetch`，
+- `test/ledger.test.js`：28 项通过。覆盖信号账本与前瞻回测：首现信号去重、档位升级信号只在
+  龙头候选及以上开仓、价格 ≤ 0 拒绝开仓也拒绝结算、四个视界各自独立结算、掉榜后用本地观测
+  序列回补、超过 48 小时记流失且不混进胜率分母、榜单指数只在单轮样本足够时记点并剔除
+  单轮 10 倍以上的脏点、区间内无采样点时指数收益必须为 null、样本不足 30 笔时拒绝给结论、
+  超额收益必须等于信号收益减同期指数收益、以及任意夹具组合下统计结果不出现 NaN 或 undefined。
+- `test/engine.test.js`：108 项通过。在进程内伪造 `self` / `localStorage` / `fetch`，
   加载真实的 `lib/` 与 `src/`，跑完整链路：建候选池、取行情、打分、落盘、
-  第二轮用真实区间增量重算量能、榜单筛选、自选豁免质量地板、适配层全部端点。
+  第二轮用真实区间增量重算量能、榜单筛选、自选豁免质量地板、适配层全部端点，
+  以及账本在浏览器端的前瞻记账（开仓价必须是首次上榜那一刻的真实价格，不能是后来的价格）、
+  账本独立落盘、`/api/backtest` 的视界与信号类型参数、非法视界回落、清空账本。
   不需要网络。
 
 另外两个冒烟测试（需要 `jsdom`）：
 
-- `npm run test:frontend`：40 项通过。先用 `npm start` 起服务，再用 jsdom 跑真实
-  `public/app.js`，断言卡片、龙虎榜、筛选、追踪页、模型页都真的渲染出来了。
+- `npm run test:frontend`：56 项通过。先用 `npm start` 起服务，再用 jsdom 跑真实
+  `public/app.js`，断言卡片、龙虎榜、筛选、追踪页、模型页、抓龙胜率页都真的渲染出来了，
+  并核对服务端在空账本时返回的胜率与超额都为 `null` 而不是 0。
   **注意**：端口 8791 的请求不要走系统代理。若本机设有 `http_proxy` / `https_proxy`，
   请先清掉或把 `127.0.0.1` 加进 `no_proxy`，否则 Node 会把回环请求发给代理，
   报 `ECONNREFUSED`（详见 Q13 第 4 条与注意事项）。
-- `node test/static.smoke.js`：93 项通过。直接用 `docs/` 里构建出来的那一整套脚本，
+- `node test/static.smoke.js`：117 项通过。直接用 `docs/` 里构建出来的那一整套脚本，
   不需要后端、不需要网络，断言「真正会部署上去的那份产物」能自己扫描、自己算分、
   自己渲染，并覆盖链筛选、搜索、行展开、手动刷新、四维体检（含 Solana 池子储备剔除）、
-  面板跨轮重绘保持展开，以及风控源未收录该合约时的缺数据渲染（不出现 undefined，
-  不把缺数据假报成「常态」）等交互。
+  面板跨轮重绘保持展开、风控源未收录该合约时的缺数据渲染（不出现 undefined，
+  不把缺数据假报成「常态」），以及抓龙胜率页的渲染纪律（样本不足时只报计数不给胜率、
+  切视界与切信号类型都不崩、账本确实落在独立的 localStorage 键上）。
 - `npm run test:live`：14 项通过（随线上标的略有浮动）。把线上实际发布的那份文件下载到
   临时目录，用真实网络跑一遍：断言线上版本能完成首轮扫描、渲染卡片、并对首个标的跑通
   四维体检、给出结论与仓位、交代集中度重算口径。验的是「用户浏览器实际拿到的东西」，
@@ -792,6 +917,40 @@ comma 批量实测无效；Solana 侧还要取 RugCheck 的全量报告，单币
 
 真正要不要开仓、开多大，取决于你自己的判断与承受能力。总资金只存在本机浏览器，不上传。
 
+**Q16：打开「抓龙胜率」页，为什么什么都没有？**
+
+因为账本是**前瞻记录**出来的，不是算出来的。标的第一次上榜时，模型把那一刻的状态与价格
+记下来；等 15 分钟 / 1 小时 / 6 小时 / 24 小时候，再用那一刻的真实价格结算。
+所以刚部署时账本是空的，这是设计而不是故障。
+
+要看数字需要两件事：服务在跑，以及时间。15 分钟视界在半小时内就能攒到足够样本；
+1 小时视界约 1 小时；6 小时与 24 小时要按各自周期等待。样本不足 30 笔时页面只显示
+计数与「样本积累中」，不渲染胜率。
+
+不想开页面也可以随时看进度：
+
+```bash
+node tools/ledger-report.js --horizon=15m
+```
+
+另外必须说清楚：**本页不做历史回放。** 八个因子里有四个（买卖笔数分布、池子深度、
+持币地址数、社交与推广状态）在任何公开历史接口里都不存在，拿今天的值回放昨天的价格
+等于把答案抄进题目。所以这里没有、也不会有「过去一年信号收益」这种曲线。
+详见第三之三节。
+
+**Q17：胜率写 60%，是不是就意味着照着买能赚钱？**
+
+不是。这个数字至少有三个必须同时看的口径：
+
+1. **同期榜单指数基准。** 如果那段时间整个榜单的中位收益比信号还高，说明赚钱的是行情
+   不是模型。所以页面会同时给出「中位超额 ＝ 信号收益 − 同期指数收益」。
+2. **样本流失率。** 掉出榜单的标的很可能就是归零那批，它们到了结算时间往往补不到价格。
+   把这一批从分母里悄悄抹掉，胜率会系统性虚高。页面单独列出流失数，不混进胜率。
+3. **最大不利偏移。** 赚 50% 的前提往往是先扛住 −60%。只有收益没有回撤，胜率会显得比实际舒服。
+
+还有两层偏差要知道：账本只覆盖本工具的候选池（不是全市场），结算用的是公开报价
+（不含滑点与手续费）。所以它衡量的是**信号的方向性**，不是可实现收益，也不预示未来。
+
 ## 十三、注意事项
 
 - 本项目不连接钱包、不请求签名、不需要私钥、不发起任何交易。
@@ -806,6 +965,16 @@ comma 批量实测无效；Solana 侧还要取 RugCheck 的全量报告，单币
 - 仓位里的总资金只存在本机浏览器，不上传。不要用「能承受的亏损」以外的钱去做实验。
 - 页面会定时请求第三方公开接口。请自觉控制刷新频率与自建服务的并发，不要干扰上游服务。
 - 候选人池里的链上标的绝大多数是 meme 币，归零是常态。任何仓位决策请自行判断并承担风险。
+- **抓龙胜率是前瞻记录的结果，不是历史回放，也不能预知未来。** 刚部署时账本是空的，
+  数字要跑够时间才攒得出来；样本不足 30 笔时页面只报计数、不给胜率。
+  读胜率时必须同时读「同期榜单指数基准」与「样本流失率」：前者区分「雷达选得准」和
+  「那阵子全市场在涨」，后者防止归零掉榜的标的被悄悄从分母里抹掉。
+- 胜率里的收益是**信号的方向性收益**，结算价取自 DexScreener 公开报价，不是可成交价。
+  真实成交还要扣滑点与手续费，所以它不等于、也不预示可实现收益。
+- 账本统计只覆盖本工具的候选池，不是全市场。它回答「在这个池子里信号值不值」，
+  不能外推到整个市场。榜单指数本身偏向活得久的标的，这一层偏差已知且不藏。
+- 纯静态部署（GitHub Pages）只在页面打开时采集，关掉的时段没有观测点；
+  到期补不到价格的信号会计入流失。要连续采集请用 Node 形态常驻运行。
 - 页面按 A 股习惯着色：涨为红、跌为绿。这不是笔误。
 - 请勿把 `data/` 目录或任何令牌提交进仓库。`.gitignore` 已覆盖这两类文件。
 - 主分支只跑零依赖测试。`jsdom` 相关的冒烟测试是可选脚本，不要为了它在 CI 里引入重依赖。
@@ -824,7 +993,10 @@ comma 批量实测无效；Solana 侧还要取 RugCheck 的全量报告，单币
 合约安全、持有人分布与仿盘对照读自另外三家第三方公开接口（GoPlus、honeypot.is、RugCheck），
 这些数据均可能延迟、缺失或错误。龙分、分级与四维体检结论只是对这些数据的机械加权计算，
 不是推荐，也不是对任何标的的安全性背书。四维体检里的仓位是风险预算倒推出来的可承受上限，
-不是建议下单金额。任何依据本项目做出的决策及其风险由使用者自行承担。
+不是建议下单金额。「抓龙胜率」页报的是本项目自己记录并结算的前瞻样本，样本量有限、
+口径覆盖的是本工具候选池而非全市场，且未计入滑点与手续费 —— 它是对本模型历史表现的
+描述性统计，既不代表未来表现，也不构成任何形式的业绩承诺。任何依据本项目做出的决策
+及其风险由使用者自行承担。
 
 ---
 
@@ -883,6 +1055,11 @@ There are two runtime modes. Both share the same scoring model and the same fron
   supply (concentration times exit-channel width), and whether to enter and how much (position,
   size derived from a risk budget). Each checkup returns a composite score, one of six verdicts,
   a tranche plan and four exit conditions. See section 3b.
+- **Hit rate (signal ledger).** No historical replay, because four of the eight factors do not
+  exist in any public historical API. Instead the ledger records a token's state and price the
+  first time it appears, then settles at the real price 15 minutes / 1 hour / 6 hours / 24 hours
+  later. Win rate, the board index benchmark and the attrition rate are meant to be read together.
+  See section 3c.
 - **Watchlist.** Watchlisted tokens stay in the candidate pool every round regardless of
   the quality floor. Stored in browser local storage.
 - **Manual position ledger.** Enter contract address, cost basis and size; the page marks
@@ -1128,6 +1305,113 @@ All three risk APIs return permissive CORS headers, so the pure static deploymen
 Pages calls them directly from the browser without a server-side proxy. The checkup therefore
 behaves identically in local server mode and static mode.
 
+## 3c. Hit Rate (Signal Ledger and Forward Test)
+
+The "Hit Rate" page answers one question: did the radar's signals actually make money afterwards.
+
+### 3c.1 Why there is no historical replay
+
+This comes first because it determines the shape of the whole module.
+
+Of the dragon score's eight factors, only volume burst, price acceleration, pool age and market
+cap can be rebuilt from public history. **Buy/sell transaction counts, pool depth, holder counts,
+social presence and paid promotion do not exist in any public historical API.** Feeding today's
+values back over yesterday's prices means treating "the volume that only grew because it pumped"
+as the entry-time evidence. That is not a backtest, it is copying the answer into the question.
+So this project does no historical replay and publishes no "signals earned X% over the past year"
+curve of any kind.
+
+The replacement is **prospective recording plus later settlement**:
+
+1. The first time a token appears on the board, its real state at that moment (dragon score,
+   all eight factor scores, market cap, pool depth, pool age, confidence, risk deduction) is
+   recorded together with the real price then. This is a **first-sighting signal**.
+2. When a token first reaches Candidate or better, an **upgrade signal** is recorded as well.
+   The two tiers are reported separately, which is the only way to tell whether "the radar
+   notices early" or "the radar confirms correctly" is worth more.
+3. Once the 15-minute / 1-hour / 6-hour / 24-hour horizons come due, the signal is settled at the
+   real price at that moment. **The signal is recorded first and the price is fetched afterwards**,
+   so there is no look-ahead bias.
+
+### 3c.2 Three numbers that must ship together
+
+A win rate on its own can always be made to look good, so the module binds three things together
+and the page gives you no way to take one without the others.
+
+| Metric | What it answers | What goes wrong without it |
+| --- | --- | --- |
+| Win rate | Share of settled samples with positive return | In a broad rally, buying blind also gives a high win rate |
+| Board index benchmark | Equal-weight median round-over-round return of every continuously listed token, chained into a reference line | You cannot separate "the radar picks well" from "the whole market was pumping" |
+| Attrition rate | Signals that came due but never got a price | Tokens that fell off the board are probably the ones that died; dropping them inflates the win rate |
+
+**Excess return = signal return - board index return over the same window.** That is what answers
+"does the radar beat the average of its own universe".
+
+### 3c.3 Four non-negotiable rules
+
+- **A price must be positive to settle.** `priceUsd <= 0` is refused at settlement and no signal is
+  opened at such a price either. On chain data, 0 and negative values mean the pool is gone or the
+  fetch failed. Recording that as a 0% return files the most dangerous outcome as "flat".
+- **A missing benchmark stays missing.** When no index sample falls in the window, excess is shown
+  as "no sample points" and never as 0. A 0 reads as "matched the market", which is a fake number
+  that looks like a conclusion.
+- **Too few samples means no conclusion.** Below 30 settled samples the page shows counts and
+  "accumulating" only, and renders no win rate, median return or excess.
+- **Attrition is counted separately.** A signal that still has no price 48 hours after coming due
+  is recorded as lost, counted and displayed separately. It is not merged into the win-rate
+  denominator and not treated as a neutral zero.
+
+The ledger also records the **maximum adverse excursion** (worst unrealised drawdown between entry
+and settlement) and reports the quantile distribution. A return without a drawdown makes a high win
+rate look far more comfortable than the trade actually was: earning 50% requires surviving -60% first.
+
+### 3c.4 How the board index is computed
+
+Each round takes every token present in both the previous and the current round, computes its
+round-over-round return, takes the median, and chains those into a net-value curve. Points beyond
+a 10x single-round move are dropped, since a price-unit change at the data source would otherwise
+whip the whole line.
+
+Known limitation, stated openly: tokens entering the board have no previous price and do not count
+for that round, and tokens leaving the board stop counting after their last round. The index is
+therefore biased toward long-lived tokens, which is the same survivorship problem the signal ledger
+faces. Both are affected in the same direction, so the comparison still holds.
+
+### 3c.5 How to use it
+
+The ledger is an account that takes time to accumulate. The numbers build up gradually, and an
+empty ledger right after deployment is by design, not a failure.
+
+```bash
+npm start                                 # the service records signals every scan while it runs
+node tools/ledger-report.js               # in another terminal, offline read of data/ledger.json
+node tools/ledger-report.js --horizon=1h  # one horizon only
+node tools/ledger-report.js --why=upgrade --chain=solana
+```
+
+In the page: go to "Hit Rate" and switch horizon (15m / 1h / 6h / 24h) and signal type
+(all / first sighting / upgrade). Both read the same `lib/ledger.js`, so the conclusions match.
+
+Rough timeline: the 15-minute horizon reaches a usable sample within about half an hour; the
+1-hour horizon takes about an hour; the 6-hour and 24-hour horizons need their own period, with
+24 hours taking a full day.
+
+**An inherent limit of pure static deployment:** static mode only collects while the page is open.
+Periods with the page closed have no observations, and signals that cannot be priced when due count
+as attrition rather than as neutral. For continuous collection, run the Node mode as a service.
+
+### 3c.6 Known biases
+
+- The candidate pool is built from boost feeds, latest token profiles, keyword expansion and your
+  watchlist. It is **not the whole market**. This statistic only says whether the signal is worth
+  anything inside that pool; it does not extrapolate to the market.
+- The board index is biased toward long-lived tokens (see 3c.4).
+- Settlement uses DexScreener's public quote, not an executable price. Real fills would also pay
+  slippage and fees, so what is reported is the **directional return of the signal**, not a
+  realisable return.
+- The 15-minute horizon is the noisiest. At equal sample size, longer horizons are more reliable
+  but take longer to accumulate.
+
 ## 4. Requirements
 
 - **Node.js 18 or newer** (20 LTS recommended). Older versions lack a global `fetch`, so
@@ -1182,8 +1466,9 @@ does the scanning itself.
 ### 5.3 Running tests separately
 
 ```bash
-npm test                    # zero-dependency unit tests (score model + checkup + browser engine)
+npm test                    # zero-dependency unit tests (score + checkup + ledger + browser engine)
 npm run test:checkup        # checkup model unit tests only
+npm run test:ledger         # signal ledger and backtest model unit tests only
 npm run test:frontend       # frontend smoke test, needs a server on 127.0.0.1:8791
 node test/static.smoke.js   # static site smoke test, needs jsdom
 npm run test:live           # live artifact verification, needs network and jsdom, run before delivery
@@ -1218,6 +1503,21 @@ it is not meant for CI.
    PnL is marked to market with live quotes. Cost basis is in USD; an empty size means 1.
 9. **Read the model page.** It documents the four reading rules, the full factor weight table
    and the checkup methodology, so you can check where a score or a verdict came from.
+10. **Read the hit rate.** The hit-rate view is backed by the signal ledger: the state and price
+    of a token are recorded the first time it appears, then settled when the 15-minute / 1-hour /
+    6-hour / 24-hour horizon comes due. You can switch horizon and signal type
+    (all / first sighting / upgrade). **The page is empty right after deployment by design** --
+    the numbers accumulate over time. To watch progress without a browser, use the offline tool:
+
+    ```bash
+    node tools/ledger-report.js               # read data/ledger.json, print every horizon
+    node tools/ledger-report.js --horizon=1h  # one horizon only
+    node tools/ledger-report.js --why=upgrade --chain=solana
+    ```
+
+    Read three things together on this page: the win rate, the board index benchmark and the
+    attrition rate. Section 3c explains why. Note also that what is reported is the
+    **directional return of the signal**, before slippage and fees, not a realisable return.
 
 Auto refresh is on by default. Turn it off and the page stops re-fetching; use the manual
 refresh button instead.
@@ -1231,7 +1531,8 @@ dragon-radar/
 │   ├── score.js           Dragon Score model (isomorphic: Node require / browser window.DragonScore)
 │   ├── sources.js         Market data source wrappers (same, window.DragonSources)
 │   ├── security.js        Contract safety / chips / copycat data layer (window.DragonSecurity)
-│   └── checkup.js         Four-dimension checkup model, pure functions (window.DragonCheckup)
+│   ├── checkup.js         Four-dimension checkup model, pure functions (window.DragonCheckup)
+│   └── ledger.js          Signal ledger and forward test, pure functions (window.DragonLedger)
 ├── src/
 │   ├── engine.js          Browser-side scanning engine for static mode (window.DragonEngine)
 │   └── static-api.js      Translates /api/* into engine calls (window.DragonApi)
@@ -1242,10 +1543,12 @@ dragon-radar/
 ├── docs/                  GitHub Pages static site (build output from tools/build-static.js)
 ├── tools/
 │   ├── build-static.js    Assembles docs/
-│   └── serve-static.js    Local preview server for docs/
+│   ├── serve-static.js    Local preview server for docs/
+│   └── ledger-report.js   Offline read of the ledger, prints the hit-rate report
 ├── test/
 │   ├── score.test.js      Scoring model unit tests (zero dependency)
 │   ├── checkup.test.js    Checkup model unit tests (zero dependency)
+│   ├── ledger.test.js     Signal ledger and backtest model unit tests (zero dependency)
 │   ├── engine.test.js     Engine plus adapter integration tests (zero dependency)
 │   ├── frontend.smoke.js  Frontend smoke test for server mode (needs a running server and jsdom)
 │   ├── static.smoke.js    Static site smoke test (needs jsdom)
@@ -1274,6 +1577,7 @@ re-run `npm run build:static`.
 | `lib/sources.js` | DexScreener, GeckoTerminal and fomo.family data source wrappers |
 | `lib/security.js` | GoPlus, honeypot.is and RugCheck contract safety and chips data layer |
 | `lib/checkup.js` | Four-dimension checkup model (safety / narrative / chips / position), pure functions, no network |
+| `lib/ledger.js` | Signal ledger and forward-test model (entry snapshots / due-date settlement / board index / statistics), pure functions, no network |
 | `src/engine.js` | Browser-side scanning engine |
 | `src/static-api.js` | `/api/*` adapter for static mode |
 | `public/index.html` | Page skeleton (contains the `build:scripts` injection point) |
@@ -1288,11 +1592,14 @@ re-run `npm run build:static`.
 | `docs/lib/sources.js` | Build output: data source wrappers |
 | `docs/lib/security.js` | Build output: contract safety and chips data layer |
 | `docs/lib/checkup.js` | Build output: checkup model |
+| `docs/lib/ledger.js` | Build output: signal ledger and forward-test model |
 | `docs/.nojekyll` | Tells GitHub Pages to skip Jekyll processing |
 | `tools/build-static.js` | Static site build script |
 | `tools/serve-static.js` | Local preview server for the static site |
+| `tools/ledger-report.js` | Offline read of `data/ledger.json`, prints the hit-rate report (read-only) |
 | `test/score.test.js` | Scoring model unit tests |
 | `test/checkup.test.js` | Checkup model unit tests |
+| `test/ledger.test.js` | Signal ledger and backtest model unit tests |
 | `test/engine.test.js` | Engine and adapter integration tests |
 | `test/frontend.smoke.js` | Frontend smoke test for server mode |
 | `test/static.smoke.js` | Static site smoke test |
@@ -1308,12 +1615,14 @@ the official public card URL.
 
 | Method | Path | Description |
 | --- | --- | --- |
-| GET | `/api/health` | Runtime status: scan count, token count, source stats, error |
+| GET | `/api/health` | Runtime status: scan count, token count, source stats, ledger counters, error |
 | GET | `/api/meta` | Chain list, default chains, factor weights, grade bands, scan interval |
 | GET | `/api/radar` | The board. Query: `chain`, `view`, `sort`, `q`, `minLiq`, `limit` |
 | GET | `/api/token/:chainId/:address` | Single token detail; fetches and scores fresh if not on the board |
 | GET | `/api/checkup/:chainId/:address` | Four-dimension checkup. Query: `capital` (used to derive position size, default 10000), `force=1` to bypass the cache. Results cache for 6 hours, 24 hours for deep checks |
 | GET | `/api/price?address=` | Live quote for one token, cached 30 seconds |
+| GET | `/api/backtest` | Hit rate. Query: `horizon` (`15m` / `1h` / `6h` / `24h`, default `1h`), `why` (`all` / `first` / `upgrade`), `chain`, `limit`. Returns the summary, sample detail, index curve and the calibration constants |
+| POST | `/api/backtest/reset` | Clear the signal ledger and start accumulating again (does not touch the board or the watchlist) |
 | GET | `/api/watchlist` | Read the watchlist |
 | POST | `/api/watchlist` | Add to watchlist, JSON body `{ tokenAddress, chainId, symbol }` |
 | DELETE | `/api/watchlist?address=&chainId=` | Remove from watchlist |
@@ -1343,29 +1652,45 @@ Results measured on the development machine:
   and fatal findings forcing size to zero; numeric fields being explicitly null rather than
   undefined when data is missing (an undefined would render as "top-10 undefined%", which reads
   like a conclusion); plus no NaN or out-of-range output across arbitrary fixture combinations.
-- `test/engine.test.js`: 76 assertions pass. Fakes `self`, `localStorage` and `fetch` in
+- `test/ledger.test.js`: 28 assertions pass. Covers the signal ledger and forward test:
+  first-sighting dedup, upgrade signals only opening at Candidate or better, a price <= 0
+  refusing both entry and settlement, the four horizons settling independently, backfilling
+  from the local observation series after a token leaves the board, the 48-hour give-up being
+  counted separately and never merged into the win-rate denominator, the board index only
+  recording a point when a round has enough tokens and dropping dirty points beyond a 10x
+  single-round move, index return being `null` when no sample falls in the window, refusing to
+  state a win rate below 30 samples, excess return equalling signal return minus index return,
+  and no NaN or undefined in any statistic across arbitrary fixture combinations.
+- `test/engine.test.js`: 108 assertions pass. Fakes `self`, `localStorage` and `fetch` in
   process, loads the real `lib/` and `src/`, and runs the whole pipeline: universe building,
   quote fetching, scoring, persistence, a second round recomputing volume from a real
   interval delta, board filtering, watchlist exemption from the quality floor, and every
-  adapter endpoint. No network needed.
+  adapter endpoint. Also covers the ledger's browser-side recording (the entry price must be the
+  real price at first appearance, never a later one), its separate localStorage key, the
+  `/api/backtest` horizon and signal-type parameters, invalid-horizon fallback, and ledger reset.
+  No network needed.
 
-Two smoke tests and one live check require `jsdom`:
+Three checks require `jsdom`:
 
-- `npm run test:frontend`: 40 assertions pass. Start the server with `npm start`, then run
+- `npm run test:frontend`: 56 assertions pass. Start the server with `npm start`, then run
   the real `public/app.js` under jsdom and assert that cards, the table, filters, the
-  tracking view and the model view actually render.
+  tracking view, the model view and the hit-rate view actually render, and that the server
+  returns `null` rather than 0 for win rate and excess while the ledger is empty.
   **Note**: requests to port 8791 must not go through a system proxy. If `http_proxy` or
   `https_proxy` is set on the machine, clear it or add `127.0.0.1` to `no_proxy`, otherwise
   Node sends the loopback request to the proxy and fails with `ECONNREFUSED` (see Q13 item 4
   and the Caveats section).
-- `node test/static.smoke.js`: 93 assertions pass. Runs the exact set of scripts built into
+- `node test/static.smoke.js`: 117 assertions pass. Runs the exact set of scripts built into
   `docs/`, with no backend, and asserts that the artifact that actually ships can scan, score
   and render by itself. It also covers chain filtering, search, row expansion, manual refresh,
   and the full checkup path against stubbed GoPlus / honeypot.is / RugCheck responses on both
   an EVM and a Solana token, including RugCheck backfilling the holder data GoPlus omits and
   Solana pool reserves being excluded from concentration by their `owner`. It also covers the
   missing-data path when the risk source has no record of the contract: no `undefined` may
-  appear in the panel and a missing feed may not be reported as a neutral stage.
+  appear in the panel and a missing feed may not be reported as a neutral stage. Finally it
+  covers the hit-rate page's disclosure rules: counts but no win rate while the sample is
+  short, no crash when switching horizon or signal type, and a ledger stored under its own
+  localStorage key.
 - `npm run test:live`: 14 assertions pass (varies slightly with the live universe). Downloads
   the files actually published on the live site, then over the real network asserts that the
   deployed build completes its first scan, renders cards, and runs a full checkup on the first
@@ -1664,6 +1989,47 @@ a large position.
 Whether to open a position at all, and how large, is your call and your risk. Total capital is
 stored only in your local browser and is never uploaded.
 
+**Q16: I opened the hit-rate view and there is nothing there. Why?**
+
+Because the ledger is built by **prospective recording**, not by computation. The first time a
+token appears on the board, the model records its state and price at that moment; when the
+15-minute / 1-hour / 6-hour / 24-hour horizon comes due, it settles at the real price then. So the
+ledger is empty right after deployment. That is by design, not a failure.
+
+Getting numbers needs two things: the service running, and time. The 15-minute horizon reaches a
+usable sample within about half an hour, the 1-hour horizon takes about an hour, and the 6-hour and
+24-hour horizons need their own periods. Below 30 samples the page shows counts and
+"accumulating" only, with no win rate.
+
+You can watch progress without opening the page:
+
+```bash
+node tools/ledger-report.js --horizon=15m
+```
+
+One more thing must be stated plainly: **this page does no historical replay.** Four of the eight
+factors (buy/sell transaction counts, pool depth, holder counts, social and promotion state) do not
+exist in any public historical API, and replaying today's values over yesterday's prices is just
+copying the answer into the question. There is no, and never will be, a "signals earned X% over the
+past year" curve here. See section 3c.
+
+**Q17: If the win rate says 60%, does that mean I make money following it?**
+
+No. That number has at least three qualifications that must be read with it:
+
+1. **The board index benchmark.** If the median return of the whole board over the same window is
+   higher than the signal's, the market made the money, not the model. So the page also reports
+   median excess = signal return - index return over the same window.
+2. **The attrition rate.** Tokens that fell off the board are probably the ones that went to zero,
+   and they often cannot be priced when settlement is due. Quietly dropping them out of the
+   denominator inflates the win rate. The page lists attrition separately and never merges it in.
+3. **Maximum adverse excursion.** Earning 50% often requires surviving -60% first. A return without
+   a drawdown makes a win rate look far more comfortable than it was.
+
+Two further biases to know: the ledger covers this tool's candidate pool rather than the whole
+market, and settlement uses public quotes without slippage or fees. So it measures the **direction**
+of the signal, not a realisable return, and does not predict the future.
+
 ## 13. Caveats
 
 - This project does not connect to a wallet, does not request signatures, does not need
@@ -1685,6 +2051,21 @@ stored only in your local browser and is never uploaded.
   self-hosted concurrency reasonable and do not burden the upstream services.
 - The overwhelming majority of tokens in the candidate pool are meme coins, and going to zero
   is the norm. Any position sizing decision is yours, and so is the risk.
+- **The hit rate is a forward record, not a historical replay, and it cannot predict the future.**
+  The ledger is empty right after deployment and the numbers take time to accumulate. Below 30
+  samples the page shows counts and no win rate at all. Always read the win rate together with
+  the board index benchmark (which separates "the radar picks well" from "the whole market was
+  pumping") and the attrition rate (which stops tokens that fell off the board from being quietly
+  dropped out of the denominator).
+- Returns in the hit rate are the **directional return of the signal**. Settlement uses
+  DexScreener public quotes, not executable prices; a real fill would also pay slippage and fees,
+  so it neither equals nor predicts a realisable return.
+- Ledger statistics cover this tool's candidate pool only, not the whole market. They say whether
+  the signal is worth anything inside that pool and do not extrapolate to the market. The board
+  index itself is biased toward long-lived tokens; that bias is known and stated rather than hidden.
+- Pure static deployment on GitHub Pages only collects while the page is open, so periods with the
+  page closed have no observations and signals that cannot be priced when due count as attrition.
+  Run the Node mode as a service for continuous collection.
 - Colors follow the Chinese market convention: up is red, down is green. This is not a bug.
 - Never commit the `data/` directory or any token into the repository. `.gitignore` already
   covers both.
@@ -1712,8 +2093,12 @@ copycat comparison are read from three further third-party public interfaces (Go
 honeypot.is, RugCheck). All of that data may be delayed, incomplete or wrong. Scores, grades
 and checkup conclusions are mechanical arithmetic over that data, not recommendations, and not
 an endorsement of any token's safety. The position size in a checkup is a risk-derived upper
-bound, not a suggested order size. Any decision you make on the basis of this software is your
-own, and you bear its risk.
+bound, not a suggested order size. The "Hit Rate" page reports forward samples that this
+project records and settles itself: the sample size is limited, it covers this tool's candidate
+pool rather than the whole market, and it does not account for slippage or fees. It is a
+descriptive statistic about the model's past behaviour, not a statement about future results
+and not a performance promise of any kind. Any decision you make on the basis of this software
+is your own, and you bear its risk.
 
 ---
 

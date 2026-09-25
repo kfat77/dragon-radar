@@ -96,6 +96,23 @@
       return ok(cr);
     }
 
+    // 抓龙胜率：信号账本的前瞻回测。
+    // 静态形态只在页面打开时采集，页面关着的时段没有观测点 —— 这一条会如实写在页面上，
+    // 不靠把流失样本藏起来把胜率做好看。
+    if (r.path === '/api/backtest') {
+      return ok(E.backtest({
+        horizon: q.horizon || '1h',
+        why: q.why || 'all',
+        chain: q.chain || '',
+        limit: q.limit || 60,
+      }));
+    }
+
+    if (r.path === '/api/backtest/reset') {
+      if (method !== 'POST') return bad(405, { error: 'method not allowed' });
+      return ok({ ok: E.resetBacktest() });
+    }
+
     // 单币实时报价
     if (r.path === '/api/price') {
       var addr = q.address || '';

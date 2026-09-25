@@ -125,6 +125,35 @@ window.open = () => null;
   ok('分级图例已填充', $$('#gradeList span').length >= 4);
   ok('模型页说明四维体检口径', /安全 ×0\.40 ＋ 筹码 ×0\.30 ＋ 叙事 ×0\.30/.test($('[data-panel="model"]').textContent));
 
+  // ---- 抓龙胜率（Node 形态走 /api/backtest）----
+  // 服务刚起来时账本大概率是空的（首轮扫描还没到点）。这里验证的是「空账本也要能被诚实渲染」：
+  // 页面必须显示「样本积累中」并给出计数，而不是印一个基于 0 笔样本的胜率。
+  const btBtn = $$('.site-nav button').find((b) => b.dataset.view === 'backtest');
+  ok('导航含抓龙胜率入口', !!btBtn);
+  btBtn.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 1200));
+  const btPanel = $('[data-panel="backtest"]');
+  const btBody = $('[data-bt-body]');
+  ok('抓龙胜率页显示且其余面板隐藏', !btPanel.hidden && $('.radar-board').hidden && $('[data-panel="model"]').hidden);
+  ok('视界 chips 4 个', $$('[data-bt-horizons] .radar-chip').length === 4);
+  ok('信号类型 chips 3 个', $$('[data-bt-whys] .radar-chip').length === 3);
+  ok('回测面板已渲染出内容', btBody.textContent.length > 60, String(btBody.textContent.length) + ' 字');
+  ok('样本不足时写「样本积累中」，不印胜率结论', /样本积累中/.test(btBody.textContent));
+  ok('样本不足时仍如实报计数', /已结算样本/.test(btBody.textContent) && /样本流失/.test(btBody.textContent));
+  ok('回测面板不出现 undefined 或 NaN', !/undefined|NaN/.test(btBody.textContent),
+    (btBody.textContent.match(/[^。]{0,50}(undefined|NaN)[^。]{0,50}/) || [''])[0]);
+  ok('回测面板说明不做历史回放', /不做历史回放/.test(btPanel.textContent));
+  ok('回测面板写明必须与基准、流失率同看', /样本流失率/.test(btPanel.textContent));
+  ok('回测面板带免责声明', /不构成投资建议/.test(btPanel.textContent + $('.radar-caveat-card').textContent));
+
+  const btRaw = await window.fetch(`${BASE}/api/backtest?horizon=1h&why=all`).then((r) => r.json());
+  ok('服务端 /api/backtest 返回 summary', !!btRaw.summary);
+  ok('空账本时胜率为 null 而不是 0', btRaw.summary.n === 0 ? btRaw.summary.winRate === null : true);
+  ok('空账本时中位超额为 null 而不是 0',
+    btRaw.summary.n === 0 ? (!btRaw.summary.benchmark || btRaw.summary.benchmark.medianExcess === null) : true);
+  ok('服务端透出四个视界', Array.isArray(btRaw.horizons) && btRaw.horizons.length === 4);
+  ok('服务端透出信号类型标签', btRaw.whyLabels && btRaw.whyLabels.upgrade === '档位升级信号');
+
   // ---- 四维体检入口（Node 形态）----
   // 真实体检要打 GoPlus / honeypot.is，属于外部依赖；这里只验证入口与承载位齐备，
   // 接口本身的链路由 test/checkup.test.js（模型）与 test/static.smoke.js（适配层）覆盖。

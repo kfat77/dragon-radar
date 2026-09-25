@@ -154,6 +154,7 @@ console.log('\n加载 lib 与 src（UMD / 全局挂载）');
 const SRC = path.resolve(__dirname, '..');
 globalThis.DragonSources = require(path.join(SRC, 'lib/sources.js'));
 globalThis.DragonScore = require(path.join(SRC, 'lib/score.js'));
+globalThis.DragonLedger = require(path.join(SRC, 'lib/ledger.js'));
 require(path.join(SRC, 'src/engine.js'));
 require(path.join(SRC, 'src/static-api.js'));
 
@@ -313,6 +314,57 @@ eq(E.SCAN_INTERVAL_MS, 60000, '扫描周期为 60 秒');
   const sc = await api('/api/scan', { method: 'POST' });
   eq(sc.status, 200, 'POST /api/scan 返回 200');
   eq(sc.body.ok, true, 'POST /api/scan 报告扫描成功');
+
+  // ------------------------------------------------------------- 信号账本 / 回测
+  console.log('\n信号账本（前瞻记录）');
+  const led = E.ledger();
+  ok(!!led, '引擎持有账本对象');
+  const lraw = globalThis.localStorage.getItem('dr.ledger.v1');
+  ok(!!lraw, '账本单独落在 localStorage 键 dr.ledger.v1（不挤占榜单快照）');
+
+  const firsts = Object.keys(led.signals).filter((id) => id.indexOf('first|') === 0);
+  ok(firsts.length > 0, '扫描过程中开出了首现信号（' + firsts.length + ' 个）');
+  // 没有前视：开仓价必须等于那个标的当轮的真实报价，而不是后来的价格
+  const dragSig = led.signals['first|' + T.dragon.chain + ':' + T.dragon.addr.toLowerCase()];
+  ok(!!dragSig, 'DRGN 的首现信号已开仓');
+  eq(dragSig.price0, 0.0123, '开仓价记录的是首次上榜那一刻的真实价格');
+  eq(dragSig.score > 0, true, '开仓快照带上了当时的龙分');
+  eq(Object.keys(dragSig.f).length, 8, '开仓快照记下八个因子分');
+  eq(dragSig.r['1h'], undefined, '1 小时视界还没到点，不能有结算记录');
+
+  const bt = await api('/api/backtest?horizon=1h&why=all');
+  eq(bt.status, 200, '/api/backtest 返回 200');
+  ok(!!bt.body.summary, '/api/backtest 带 summary');
+  eq(bt.body.summary.horizon, '1h', '视界参数生效');
+  eq(bt.body.summary.horizonLabel, '1 小时', '视界带上中文标签');
+  eq(bt.body.summary.sampleEnough, false, '样本远不足 30 笔时明确标为不足');
+  eq(bt.body.summary.n, 0, '尚无已结算样本');
+  ok(bt.body.summary.waiting > 0, '未到点的信号计入「待结算」而不是流失（' + bt.body.summary.waiting + ' 个）');
+  eq(bt.body.summary.dead, 0, '刚开的信号不会被误记流失');
+  eq(bt.body.summary.winRate, null, '没有已结算样本时胜率为 null，不是 0');
+  ok(bt.body.summary.benchmark && bt.body.summary.benchmark.medianExcess === null, '缺基准时中位超额为 null，不用 0 冒充持平');
+  ok(Array.isArray(bt.body.summary.byGrade) && bt.body.summary.byGrade.length === 0, '无样本时分层为空数组');
+  ok(Array.isArray(bt.body.samples) && bt.body.samples.length > 0, '明细按 state=all 返回，能看到未到点的信号');
+  ok(bt.body.samples.every((x) => x.state === 'waiting' || x.state === 'settled' || x.state === 'lost'), '明细每行都带明确状态');
+  ok(Array.isArray(bt.body.horizons) && bt.body.horizons.length === 4, '透出四个视界定义');
+  eq(bt.body.whyLabels.upgrade, '档位升级信号', '透出信号类型的标签');
+
+  const btUp = await api('/api/backtest?horizon=24h&why=upgrade');
+  eq(btUp.status, 200, '按信号类型过滤也返回 200');
+  eq(btUp.body.summary.why, 'upgrade', 'why 参数生效');
+  ok(btUp.body.samples.every((x) => x.why === 'upgrade'), '明细只含升级信号');
+  eq(btUp.body.summary.n, 0, '24 小时视界尚无结算');
+
+  const btBad = await api('/api/backtest?horizon=99x');
+  eq(btBad.body.summary.horizon, '1h', '非法视界回落到默认 1 小时，不报错');
+
+  console.log('\n回测清空');
+  const breset = await api('/api/backtest/reset', { method: 'POST' });
+  eq(breset.status, 200, 'POST /api/backtest/reset 返回 200');
+  eq(breset.body.ok, true, '清空账本成功');
+  eq(Object.keys(E.ledger().signals).length, 0, '清空后账本里没有残留信号');
+  const bget = await api('/api/backtest/reset', { method: 'GET' });
+  eq(bget.status, 405, '清空接口只接受 POST');
 
   // ------------------------------------------------------------- 汇总
   console.log('\n通过 ' + pass + ' 项');

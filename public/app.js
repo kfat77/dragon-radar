@@ -23,6 +23,8 @@ const store = {
   // 四维体检里的仓位是「估值」，必须由服务端/引擎按同一个风险预算倒推。这里只存
   // 用户自己的总资金，默认 10000，改一次即写回本机，不发送到任何第三方。
   capital: Number(localStorage.getItem('dr.capital') || 10000) || 10000,
+  // 胜率回测的视图选项。默认 1 小时视界：15 分钟噪声最大，6/24 小时要等很久才够样本。
+  bt: { horizon: '1h', why: 'all' },
   _chainSig: '',
 };
 
@@ -797,6 +799,186 @@ function renderModel(weights, grades) {
   });
 }
 
+// ------------------------------------------------------------ 抓龙胜率（信号账本）
+/**
+ * 这一页不做历史回放，只报「先记录、后结算」的真实样本。
+ *
+ * 三个数必须同时出现：胜率、同期榜单指数基准、样本流失率。缺任何一个，胜率都能被做得很漂亮 ——
+ * 全市场普涨时闭眼买也是高胜率；把归零掉出榜单的标的从分母里悄悄抹掉，胜率还会更高。
+ * 所以这里把三件事绑在同一张卡上，不给单独取用的机会。
+ *
+ * 样本不足 MIN_SAMPLE 时只渲染原始计数，胜率 / 中位收益 / 超额一律写「样本积累中」，
+ * 不拿几笔的结果冒充结论。
+ */
+const BT = { loading: false, last: null };
+
+const pctStr = (v) => (typeof v === 'number' && isFinite(v) ? (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%' : '—');
+const rateStr = (v) => (typeof v === 'number' && isFinite(v) ? (v * 100).toFixed(1) + '%' : '—');
+
+function btUrl() {
+  const p = new URLSearchParams({ horizon: store.bt.horizon, why: store.bt.why, limit: '60' });
+  return '/api/backtest?' + p.toString();
+}
+
+async function loadBacktest() {
+  if (BT.loading) return BT.last;
+  BT.loading = true;
+  try {
+    const r = await api(btUrl());
+    if (r.ok && r.body) { BT.last = r.body; renderBacktest(); }
+    else {
+      $('[data-bt-body]').innerHTML = `<p class="radar-empty">取不到账本：${esc((r.body && r.body.error) || ('HTTP ' + r.status))}</p>`;
+    }
+    return BT.last;
+  } catch (e) {
+    $('[data-bt-body]').innerHTML = `<p class="radar-empty">取不到账本：${esc(String(e && e.message || e))}</p>`;
+    return BT.last;
+  } finally { BT.loading = false; }
+}
+
+function renderBacktest() {
+  const host = $('[data-bt-body]');
+  if (!host) return;
+  const d = BT.last;
+  if (!d) { host.innerHTML = '<p class="radar-empty">尚未取到账本数据。</p>'; return; }
+  if (d.available === false) { host.innerHTML = `<p class="radar-empty">${esc(d.error || '回测不可用')}</p>`; return; }
+
+  const s = d.summary || {};
+  const b = s.benchmark || {};
+  const t = s.totals || {};
+  const ix = s.index || {};
+  const enough = !!s.sampleEnough;
+  const H = esc(s.horizonLabel || '');
+  const W = esc(s.whyLabel || '');
+
+  const stat = (k, v, n, cls) => `<div class="radar-bt-stat${cls ? ' ' + cls : ''}">
+    <p class="k">${esc(k)}</p><p class="v">${v}</p><p class="n">${esc(n || '')}</p></div>`;
+
+  // 样本不够：胜率、中位、超额一律替换成「样本积累中」，不给数字就没有误读空间
+  const stats = [
+    stat('已结算样本', String(s.n || 0), `${H}视界 · ${W}`),
+    enough ? stat('胜率', rateStr(s.winRate), '正收益占比', s.winRate >= 0.5 ? 'is-up' : 'is-down')
+           : stat('胜率', '样本积累中', `门槛 ${s.minSample || 30} 笔`, 'is-mute'),
+    enough ? stat('中位收益', pctStr(s.median), '比均值更抗极端值', s.median >= 0 ? 'is-up' : 'is-down')
+           : stat('中位收益', '样本积累中', '不足门槛不给结论', 'is-mute'),
+    enough ? (b.medianExcess == null
+      ? stat('中位超额', '无基准', '同期榜单指数没有采样点')
+      : stat('中位超额', pctStr(b.medianExcess), '信号收益 − 同期榜单指数', b.medianExcess >= 0 ? 'is-up' : 'is-down'))
+           : stat('中位超额', '样本积累中', '不足门槛不给结论', 'is-mute'),
+    stat('待结算', String(s.waiting || 0), '视界未到，或刚落榜'),
+    stat('样本流失', String(s.dead || 0), '到期仍补不到价格'),
+  ].join('');
+
+  const gate = enough ? '' : `<div class="radar-bt-gate">
+    <b>样本积累中。</b>当前 ${H} 视界已结算 <b>${s.n || 0}</b> 笔，门槛 <b>${s.minSample || 30}</b> 笔。
+    样本不足时本页只报原始计数，不给胜率 —— 几笔的胜率没有解释力，写出来比不写更误导。
+    15 分钟视界的样本积得最快，可以先看它。
+  </div>`;
+
+  // 基准：把「雷达选得准」和「那阵子全市场在涨」分开的唯一办法
+  const benchRows = [
+    ['同期榜单指数收益（等权中位）', b.medianReturn == null ? '无采样点' : pctStr(b.medianReturn)],
+    ['信号中位超额（信号 − 指数）', b.medianExcess == null ? '无采样点' : pctStr(b.medianExcess)],
+    ['跑赢基准的比例', b.beatRate == null ? '—' : rateStr(b.beatRate)],
+    ['有基准的样本 / 缺基准的样本', `${b.available || 0} / ${b.missing || 0}`],
+    ['指数点数 / 当前净值', `${ix.points || 0} 点 · ${ix.level == null ? '—' : ix.level.toFixed(4)}`],
+    ['指数单轮中位波动', ix.medianRoundRet == null ? '—' : pctStr(ix.medianRoundRet)],
+  ].map(([k, v]) => `<tr><td>${esc(k)}</td><td><b>${esc(v)}</b></td></tr>`).join('');
+
+  // 分层：档位越高是否确实越赚，这是龙分有没有区分度的直接证据
+  const gradeRows = (s.byGrade || []).map((g) => `<tr>
+    <td><b>${esc(g.label)}</b></td>
+    <td>${g.n}</td>
+    <td class="${g.winRate >= 0.5 ? 'is-up' : 'is-down'}">${rateStr(g.winRate)}</td>
+    <td class="${g.median >= 0 ? 'is-up' : 'is-down'}">${pctStr(g.median)}</td>
+    <td>${g.medianExcess == null ? '无基准' : pctStr(g.medianExcess)}</td>
+  </tr>`).join('') || '<tr><td colspan="5">该视界下还没有已结算样本。</td></tr>';
+
+  const chainRows = (s.byChain || []).map((c) => `<tr>
+    <td>${esc(c.label)}</td><td>${c.n}</td>
+    <td class="${c.winRate >= 0.5 ? 'is-up' : 'is-down'}">${rateStr(c.winRate)}</td>
+    <td class="${c.median >= 0 ? 'is-up' : 'is-down'}">${pctStr(c.median)}</td>
+    <td>${c.medianExcess == null ? '无基准' : pctStr(c.medianExcess)}</td>
+  </tr>`).join('');
+
+  const STATE_LABEL = { settled: '已结算', lost: '流失', waiting: '待结算' };
+  const sampleRows = (d.samples || []).map((x) => `<tr>
+    <td>${esc(ago(x.t0))}</td>
+    <td><b>${esc(x.symbol || '?')}</b><span class="radar-bt-dim"> ${esc(x.chainId || '')}</span></td>
+    <td>${esc((d.whyLabels || {})[x.why] || x.why)}</td>
+    <td>${x.score}</td>
+    <td>${esc(x.gradeLabel || x.grade || '')}</td>
+    <td>${price(x.price0)}</td>
+    <td class="${x.r == null ? '' : x.r >= 0 ? 'is-up' : 'is-down'}">${x.r == null ? '—' : pctStr(x.r)}</td>
+    <td class="${x.ex == null ? '' : x.ex >= 0 ? 'is-up' : 'is-down'}">${x.ex == null ? '—' : pctStr(x.ex)}</td>
+    <td class="is-down">${x.mae == null ? '—' : pctStr(x.mae)}</td>
+    <td>${esc(STATE_LABEL[x.state] || x.state || '')}</td>
+  </tr>`).join('') || '<tr><td colspan="10">还没有记录到该视界下的信号。</td></tr>';
+
+  // q 分位、最大不利偏移：只有收益没有回撤，胜率会显得比实际舒服
+  const dist = enough ? `<div class="radar-bt-dist">
+    <span>25 分位 <b>${pctStr(s.p25)}</b></span>
+    <span>中位 <b>${pctStr(s.median)}</b></span>
+    <span>75 分位 <b>${pctStr(s.p75)}</b></span>
+    <span>最好 <b class="is-up">${pctStr(s.best)}</b></span>
+    <span>最差 <b class="is-down">${pctStr(s.worst)}</b></span>
+    <span>翻倍以上 <b>${rateStr(s.doubleRate)}</b></span>
+    <span>腰斩以上 <b class="is-down">${rateStr(s.halfRate)}</b></span>
+    <span>平均最大浮亏 <b class="is-down">${s.avgMae == null ? '—' : pctStr(s.avgMae)}</b>（${s.maeN || 0} 笔有观测）</span>
+  </div>` : '';
+
+  const curve = (d.series || []).length >= 2
+    ? `<canvas class="radar-bt-spark" data-bt-spark></canvas>
+       <p class="radar-note" style="margin-top:6px">榜单指数净值：每轮取「上一轮与这一轮都在榜」标的的轮间收益中位数，连乘而成。它偏向活得久的那批，与信号账本面对同一类幸存者问题 —— 但两者同向受影响，做比较仍然成立。</p>`
+    : '<p class="radar-empty">榜单指数还没有足够的采样点（单轮至少 3 个连续在榜标的才记点）。</p>';
+
+  host.innerHTML = `
+    <div class="radar-bt-grid">${stats}</div>
+    ${gate}
+    ${dist}
+    <div class="radar-bt-cols">
+      <div class="radar-panel">
+        <p class="card-index">对照基准 · 回答「雷达选的比池子平均强吗」</p>
+        <div class="table-wrap"><table class="radar-table"><tbody>${benchRows}</tbody></table></div>
+        ${curve}
+      </div>
+      <div class="radar-panel">
+        <p class="card-index">档位分层 · 分数越高是不是真的越赚</p>
+        <div class="table-wrap"><table class="radar-table">
+          <thead><tr><th>档位</th><th style="width:60px">样本</th><th style="width:80px">胜率</th><th style="width:88px">中位收益</th><th style="width:88px">中位超额</th></tr></thead>
+          <tbody>${gradeRows}</tbody>
+        </table></div>
+        ${chainRows ? `<div class="table-wrap" style="margin-top:12px"><table class="radar-table">
+          <thead><tr><th>链</th><th style="width:60px">样本</th><th style="width:80px">胜率</th><th style="width:88px">中位收益</th><th style="width:88px">中位超额</th></tr></thead>
+          <tbody>${chainRows}</tbody>
+        </table></div>` : ''}
+      </div>
+    </div>
+
+    <div class="radar-panel" style="margin-top:18px">
+      <p class="card-index">最近信号明细（含待结算与流失）</p>
+      <div class="table-wrap"><table class="radar-table">
+        <thead><tr>
+          <th style="width:96px">开仓时间</th><th>标的</th><th style="width:110px">信号</th>
+          <th style="width:56px">龙分</th><th style="width:88px">档位</th><th style="width:110px">入场价</th>
+          <th style="width:84px">视界收益</th><th style="width:84px">超额</th>
+          <th style="width:88px">最大浮亏</th><th style="width:84px">状态</th>
+        </tr></thead>
+        <tbody>${sampleRows}</tbody>
+      </table></div>
+      <p class="radar-note" style="margin-top:10px">
+        账本自 ${esc(t.startedAt ? ago(t.startedAt) : '尚未开始')} 起记录，共 ${t.rounds || 0} 轮扫描，
+        累计开仓 ${t.opened || 0} 次、完成结算 ${t.settled || 0} 个视界，当前存续 ${t.signals || 0} 个信号。
+        「流失」指到期仍补不到价格：多半是池子被撤或标的归零。它们不计入胜率分母，但会单独列出来 ——
+        从统计里悄悄抹掉这批，胜率会系统性虚高。
+      </p>
+    </div>
+  `;
+
+  const cv = host.querySelector('[data-bt-spark]');
+  if (cv) requestAnimationFrame(() => drawSpark(cv, d.series));
+}
+
 // ------------------------------------------------------------ 追踪 / 抄作业
 async function loadFomo() {
   const handle = $('#fomoHandle').value.trim() || 'IcyNoisyWhale';
@@ -925,12 +1107,14 @@ function setView(v) {
   $$('.site-nav button').forEach((b) => b.classList.toggle('is-active', b.dataset.view === v));
   $('[data-panel="track"]').hidden = v !== 'track';
   $('[data-panel="model"]').hidden = v !== 'model';
+  $('[data-panel="backtest"]').hidden = v !== 'backtest';
   const board = v === 'radar' || v === 'board';
   $('.radar-board').hidden = !board;
   $('.radar-hero').hidden = !board;
   $('[data-radar-list]').hidden = v !== 'radar';
   $('[data-radar-table]').hidden = v !== 'board';
   if (v === 'track') { loadFomo().catch(() => {}); refreshPositions(); loadWatchlist(); }
+  if (v === 'backtest') loadBacktest().catch(() => {});
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -1039,6 +1223,33 @@ function bind() {
     $('#wlAddr').value = '';
     toast('已加入自选');
     loadWatchlist(); refresh();
+  };
+
+  // 胜率回测：视界与信号类型切换
+  $$('[data-bt-horizons] .radar-chip').forEach((b) => {
+    b.onclick = () => {
+      $$('[data-bt-horizons] .radar-chip').forEach((x) => x.classList.remove('is-active'));
+      b.classList.add('is-active');
+      store.bt.horizon = b.dataset.horizon;
+      loadBacktest().catch(() => {});
+    };
+  });
+  $$('[data-bt-whys] .radar-chip').forEach((b) => {
+    b.onclick = () => {
+      $$('[data-bt-whys] .radar-chip').forEach((x) => x.classList.remove('is-active'));
+      b.classList.add('is-active');
+      store.bt.why = b.dataset.why;
+      loadBacktest().catch(() => {});
+    };
+  });
+  const br = $('#btReset');
+  if (br) br.onclick = async () => {
+    if (!window.confirm('清空信号账本并重新开始积累？已收集的样本会全部丢失，榜单与自选不受影响。')) return;
+    const r = await api('/api/backtest/reset', { method: 'POST' });
+    if (!r.ok) { toast('清空失败：' + ((r.body && r.body.error) || r.status)); return; }
+    toast('账本已清空，从下一轮扫描开始重新积累');
+    BT.last = null;
+    loadBacktest().catch(() => {});
   };
 }
 
