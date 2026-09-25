@@ -329,24 +329,115 @@ RugCheck 全量报告补齐持币地址数、前 20 持有人与 insider 标记�
 
 1. 每个标的第一次出现在榜单上时，把那一刻的真实状态（龙分、八个因子分、市值、池子深度、
    池龄、置信度、风险扣分）连同当时的真实价格原样记下来，叫「首现信号」。
-2. 当标的首次达到「龙头候选」及以上时，再记一条「档位升级信号」。两种信号分开统计，
-   才能看出「雷达发现得早」和「雷达确认得准」哪一头更值钱。
-3. 等 15 分钟 / 1 小时 / 6 小时 / 24 小时四个视界到点后，用那一刻的真实价格结算。
+2. 当标的首次达到「龙头候选」及以上时，再记一条「档位升级信号」。
+3. 当标的达到「真龙」档时，再记一条「真龙信号」——**这一条是本页默认口径**，
+   也就是「只买真龙」这条策略腿。
+4. 三条腿的**出场规则完全相同**（见 3c.3）：视界窗口内触及止盈线即以那一笔成交，
+   其余持满视界。三条腿分开统计，才能看出「雷达发现得早」和「雷达确认得准」哪一头更值钱；
+   而三条腿共用同一套出场规则，两条腿之间的差别就只来自入场门槛这一个变量。
+5. 等 15 分钟 / 1 小时 / 6 小时 / 24 小时四个视界到点后，用那一刻的真实价格结算。
    **信号是先记的，价格是后取的**，没有前视偏差。
 
-### 3c.2 三个必须同时给出的数
+### 3c.2 四个必须同时给出的数
 
-单独一个胜率数字是可以被做得很漂亮的，所以本模块把三件事绑在一起输出，页面上不给单独取用的机会。
+单独一个胜率数字是可以被做得很漂亮的，所以本模块把它们绑在一起输出，页面上不给单独取用的机会。
 
 | 指标 | 它回答什么 | 缺了它会怎样 |
 | --- | --- | --- |
 | 胜率 | 已结算样本里正收益的占比 | 那段时间全市场普涨时，闭着眼睛买也是高胜率 |
 | 榜单指数基准 | 同一时段、同一榜单里所有连续在榜标的的等权收益（每轮再平衡）连乘成参考线 | 无法区分「雷达选得准」和「那阵子全市场在涨」 |
 | 样本流失率 | 到点却补不到价格的信号数 | 掉出榜单的标的很可能就是归零那批，悄悄抹掉会让胜率系统性虚高 |
+| 止盈触发率 | 这一批里有多少笔是靠触及止盈线出场的 | 有了止盈之后，胜率可以被「提前落袋」做高；不看触发率就分不清「选得准」和「收得早」 |
 
 **超额收益 = 信号收益 − 同期榜单指数收益。** 这才回答「雷达选的比雷达池子的平均强吗」。
+**止盈触发率必须和胜率并排看** —— 这是出场规则被写进策略之后新增的纪律。
 
-### 3c.3 五条不退让的口径
+### 3c.3 策略口径：只买真龙 + 翻倍止盈
+
+页面默认回答的是一个明确的策略问题：**只买真龙档、触及 +100%（翻倍）就止盈**，到底赚不赚钱。
+这一节把「入场门槛」和「出场规则」各自的取舍摊开讲，因为两者都不该是拍出来的。
+
+**入场门槛：只要真龙，不加任何附加条件。** 附加条件一旦加进来，回头就说不清收益到底是
+「真龙」带来的还是「筛选条件」带来的。真龙这条腿自账本 v3 起开始记录，**不回溯补历史** ——
+补历史等于把后来的价格当成入场依据。
+
+**出场规则：三条腿一视同仁。** 出场规则固定，两条腿的差别才只来自入场门槛；
+如果只给真龙止盈、对照组不给，看到的差异里就混着出场规则的贡献，比不出来。
+
+**止盈线定在哪里，是量出来的。** 这个市场的收益极度右偏：中位收益 0%、均值全靠个位数的大赢家
+撑着（单笔最高 +1047.8%）。所以**不能拿胜率挑止盈线** —— 见下表第一列，封顶法下的胜率对所有
+止盈线都是同一个数，因为封顶不会把亏损变成盈利。
+
+标定方法叫**封顶法**：把每个已结算样本的收益按候选止盈线封顶，`r' = min(r, 止盈线)`，再重算统计。
+这不是糊弄，理由是硬的：**任何结算在止盈线之上的样本，价格既然收在线之上，途中必然穿过这条线，
+止盈就按线成交** —— 对这半边样本，封顶是**精确**重演；只有结算在线下的样本才可能被低估。
+所以这条线的**成本被精确量到，收益只会被低估**。附带好处是样本 = 全部已结算样本，
+不带「必须有观测序列」那个筛选条件，也就避开了下一节要讲的那个致命偏倚。
+
+1 小时视界、238 个已结算样本，实测（`node tools/tp-explore.js`）：
+
+| 止盈线 | 胜率 | 中位收益 | 均值收益 | 10% 截尾均值 | 中位超额 | 跑赢基准 | 触线占比 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 不止盈 | 39.5% | 0.0% | **+5.3%** | **-6.0%** | -0.6% | 47.5% | — |
+| +10% | 39.5% | 0.0% | -14.9% | -8.2% | -1.1% | 45.8% | 21.8% |
+| +15% | 39.5% | 0.0% | -13.8% | -7.5% | -0.8% | 47.1% | 20.6% |
+| +20% | 39.5% | 0.0% | -12.9% | -6.9% | -0.8% | 47.1% | 16.4% |
+| +30% | 39.5% | 0.0% | -11.5% | -6.4% | -0.6% | 47.5% | 12.6% |
+| +40% | 39.5% | 0.0% | -10.3% | -6.1% | -0.6% | 47.5% | 10.9% |
+| +50% | 39.5% | 0.0% | -9.3% | **-6.0%** | -0.6% | 47.5% | 8.0% |
+| +80% | 39.5% | 0.0% | -7.3% | -6.0% | -0.6% | 47.5% | 6.3% |
+| **+100%（采用）** | 39.5% | 0.0% | -6.1% | **-6.0%** | -0.6% | 47.5% | 5.5% |
+| +200% | 39.5% | 0.0% | -2.7% | -6.0% | -0.6% | 47.5% | 2.5% |
+
+读法只有一条：**看截尾均值那一列**。均值被个位数的大赢家主导（单笔 +1047.8% 一进一出就是
+十几个百分点），截尾均值才是「削掉上行」这件事的真实代价。它给出的结论很干脆：
+
+- 不止盈：-6.0%
+- **+40% 及以下：全部比不止盈更差**（+30% 掉到 -6.4%，+15% 掉到 -7.5%）
+- **+50% 及以上：回到 -6.0%，与不止盈持平**
+
+所以这是一条「要么不设、要么设得足够高」的线。取 **+100%** 而不是 +50%，
+是因为 +50% 以上在截尾均值上已经打平，剩下的选择标准是**触发语义**：
++100%（翻倍才走）是唯一一个含义毫无歧义的水位，触发占比 5.5% ——
+它只对真正罕见的翻倍事件生效，不动普通样本的分布。
+
+这张表是 **2026-09-26 01:29（本地）238 个已结算样本的快照**。账本是持续前瞻累积的，
+样本每长大一轮，表里的数字都会小幅漂（样本 230 笔时不止盈那一行是 -5.1%，238 笔时是 -6.0%）——
+**结论比数字稳**：截尾均值的交叉点始终在 +40% 与 +50% 之间，从来没有掉到 +30% 以下。
+所以别记数字，记结论。
+
+要自己复现：`data/` 不进仓库（那是本地运行产物，见第八节文件清单），所以新克隆出来的账本是空的，
+跑 `node tools/tp-explore.js` 只会看到你自己从零开始累积的那份。同一份账本输入下这个工具是确定性的，
+换一份账本就会给出那一份的读数 —— 这也正是它该有的行为。
+
+**成交价按止盈线计，不按跳空后看到的那口价。** 两个理由：挂在线上的限价单就是线价成交；
+而且这样线上规则与离线标定的封顶法**完全等价**，两边不可能悄悄漂移。真实成交只会更好。
+同理，若某个视界到点时价格仍在止盈线之上（观测缺失的长视界会这样，15 分钟腿尤其明显），
+也按止盈线成交记为止盈 —— 否则线上规则会跑赢自己设的上限。
+
+**止损被否掉了，理由不是「数字全变差」**（实测是混合的）。同一批样本上（148 笔有观测序列）：
+
+| 组合 | 胜率 | 中位收益 | 均值收益 | 10% 截尾均值 | 中位超额 |
+| --- | --- | --- | --- | --- | --- |
+| 不止盈 / 不止损 | 22.3% | -1.1% | -9.1% | -12.4% | -3.9% |
+| 不止盈 / -20% 止损 | 20.9% | -1.4% | **-5.1%** | **-9.5%** | **-4.6%** |
+| 不止盈 / -35% 止损 | 22.3% | -1.1% | -5.6% | -10.8% | -3.9% |
+
+止损确实削掉了左侧尾部（均值 -9.1% → -5.1%，截尾均值 -12.4% → -9.5%），
+但**胜率略降（22.3% → 20.9%）、中位收益没有改善（-1.1% → -1.4%）、中位超额反而更差
+（-3.9% → -4.6%）**。它改善的是「能亏多少」，没有改善「赚不赚得到」。
+而决定性的理由是结构性的：**止损只能落在「有观测点」的时刻上**，
+而真正该止损的那批（池子被撤、标的归零）往往先掉出候选池、不再产生观测点，止损根本不会响；
+它响的是「还在、只是波动大」的那批。所以本模块不设止损。
+
+**两条代价说清楚：**
+
+1. 止盈把上行封在 +100%，因此「最好」不会超过止盈线，而「翻倍以上」这一档与
+   「止盈触发」是**同一批样本**。这不是缺陷，是止盈的代价本身。
+2. 止盈判定落在 5 分钟一个窗口的观测点上，5 分钟内冲高又回落的价格看不到，
+   所以**止盈触发率被系统性低估**，报出来的收益是偏保守的下界。
+
+### 3c.4 五条不退让的口径
 
 - **价格必须为正才结算。** `priceUsd <= 0` 一律拒绝结算，开仓时也不开。链上行情里的 0 与负数
   代表池子没了或取数出错，把它当成 0% 收益，等于把最危险的那一类结局记成「不亏不赚」。
@@ -364,7 +455,7 @@ RugCheck 全量报告补齐持币地址数、前 20 持有人与 insider 标记�
 此外还会记录**最大不利偏移**（从开仓到结算之间出现过的最差浮亏）并给出分位分布。
 只有收益数字没有回撤数字，胜率会显得比实际舒服得多 —— 赚 50% 的前提是先扛住 −60%。
 
-### 3c.4 榜单指数怎么算
+### 3c.5 榜单指数怎么算
 
 每一轮取「上一轮与这一轮都在榜」的标的，算各自的轮间收益，做 10% 截尾（首尾各去掉 10%，
 标的少于 20 个时不截尾），取**等权平均**，再连乘成净值曲线。单轮涨跌超过 10 倍的点会被剔除
@@ -382,8 +473,11 @@ RugCheck 全量报告补齐持币地址数、前 20 持有人与 insider 标记�
 10 倍阈值拦住」的脏点就能把整条基准线抬起来。
 
 已知口径限制，不藏：新进榜的标的当轮没有上一轮价格，不计入；掉出榜单的标的在最后一轮之后
-不再计入。所以它偏向「活得久」的那批，与信号账本面对的是同一类幸存者问题 ——
-但两者同向受影响，做比较仍然成立。
+不再计入。**这一条比原先以为的严重得多。** 观测点只在标的还留在候选池里时才产生，而候选池取自
+「最新推广 / 最新代币资料」，所以**涨得最猛的那批恰好最快离开候选池**。同一份账本实测：
+留在池里（有观测序列）的那批 1 小时收益中位 **-0.1%**，离开池里、靠回补价结算的那批中位
+**+13.6%**，差 13 个百分点。榜单指数只由「上一轮与这一轮都在榜」的标的构成，只看得见留下来的
+那批，因此偏低，**超额收益偏乐观。这是已知缺陷，尚未修复**；修它需要在每轮为掉榜标的额外补一次价。
 
 另有一条容易忽略的性质：**「每轮收益的连乘」不等于「每个标的在整个窗口上的收益」**。
 前者是在「典型的一分钟」上反复取值，后者才是「典型的一个标的」。实测榜单每轮的收益中位数
@@ -391,7 +485,7 @@ RugCheck 全量报告补齐持币地址数、前 20 持有人与 insider 标记�
 所以中位口径的指数在平静行情里就是一条水平线 —— 这正是它不能当基准的原因。
 等权口径衡量的是「每分钟里池子整体的典型涨跌」，不是「典型标的的累计涨跌幅」。
 
-### 3c.5 怎么用
+### 3c.6 怎么用
 
 账本是一门需要时间积累的账。数字是一点点攒出来的，**刚部署时它是空的，这是设计而不是故障**。
 
@@ -399,28 +493,42 @@ RugCheck 全量报告补齐持币地址数、前 20 持有人与 insider 标记�
 npm start                                # 服务跑起来后，每轮扫描自动记账
 node tools/ledger-report.js              # 另开一个终端，随时看进度（离线读 data/ledger.json）
 node tools/ledger-report.js --horizon=1h # 只看 1 小时视界
+node tools/ledger-report.js --why=dragon # 只看「只买真龙」（策略口径，也是默认）
 node tools/ledger-report.js --why=upgrade --chain=solana
+node tools/tp-explore.js                 # 止盈线的标定表（离线、只读、可复跑）
 ```
 
-页面侧：导航「抓龙胜率」，可切换视界（15 分钟 / 1 小时 / 6 小时 / 24 小时）与信号类型
-（全部 / 首现 / 档位升级）。两者用的是同一个 `lib/ledger.js`，结论一致。
+页面侧：导航「抓龙胜率」，可切换视界（15 分钟 / 1 小时 / 6 小时 / 24 小时）与信号口径
+（只买真龙 / 档位升级 / 首现 / 全部）。两者用的是同一个 `lib/ledger.js`，结论一致。
 
 参考时间线：15 分钟视界在半小时内就能攒到足够样本；1 小时视界约 1 小时；
 6 小时与 24 小时视界要按各自周期等待。24 小时视界要整整一天。
+**真龙档本身很稀有**（约 5%：2026-09-26 01:29 快照是 284 个信号里 15 个真龙），
+所以真龙口径的样本积得最慢 —— 这是这个口径的固有成本，不是采集出问题。
 
 **纯静态部署的固有限制：** 静态形态只在页面打开时采集，关掉的时段没有观测点。
 到期补不到价格的信号会计入流失，而不是被当成中性。要连续采集请用 Node 形态常驻运行。
 
-### 3c.6 已知偏差
+### 3c.7 已知偏差
 
 - 候选池由推广榜 / 最新代币资料 / 关键词扩样 / 自选合成，**不是全市场**。
   这份统计只说明「在这个池子里信号值不值」，不能外推到整个市场。
-- 榜单指数偏向活得久的标的（见 3c.4）。
+- **榜单指数系统性偏低，因此超额收益偏乐观。这一条比原先以为的严重得多。**
+  观测点只在标的还留在候选池里时才产生，而候选池取自「最新推广 / 最新代币资料」——
+  **涨得最猛的那批恰好最快离开候选池**。同一份账本实测：留在池里（有观测序列）的那批
+  1 小时收益中位 **-0.1%**，离开池里、靠回补价结算的那批中位 **+13.6%**，差 13 个百分点。
+  榜单指数只由「上一轮与这一轮都在榜」的标的构成，只看见留下来的那批，所以它偏低，
+  超额收益因此被抬高。**这是已知缺陷，尚未修复**，修它需要在每轮为掉榜标的额外补一次价。
+- 同理，靠观测序列做的路径判断（比如止盈触发率）只能看见留下来的那批，
+  在这些数上不要下结论。定止盈线用的是不依赖观测序列的封顶法，正是为了绕开这个偏倚。
 - 结算用的是 DexScreener 的公开报价，不是可成交价。真实成交还要扣滑点与手续费，
   所以这里报的是**信号的方向性收益**，不是可实现收益。
 - 15 分钟视界的噪声最大；样本量相同时，越长的视界越可靠，但积样本也越慢。
+- **版本口径**：账本带版本号。只加字段、没改口径的升级（如 v2 → v3 加了真龙腿与出场原因）
+  是**就地升版、数据全留**；改了口径的升级（v1 → v2 换了指数定义）必须**重置**，
+  否则一条线上混两种定义，比丢数据更糟。
 
-### 3c.7 首次线上读数：为什么单次快照不是结论
+### 3c.8 首次线上读数：为什么单次快照不是结论
 
 下面这一段是**真实跑出来的**，不是示意。口径修正提交后，服务从 2026-09-25 21:42 起持续运行，
 每 10 分钟导出一次同一份账本的读数。原始输出摘录：
@@ -706,6 +814,7 @@ dragon-radar/
 | `tools/build-static.js` | 静态站构建脚本 |
 | `tools/serve-static.js` | 静态站本地预览服务 |
 | `tools/ledger-report.js` | 离线读 `data/ledger.json` 并打印抓龙胜率报告（只读） |
+| `tools/tp-explore.js` | 止盈 / 止损阈值标定器：封顶法 + 观测序列法两张表（离线、只读、可复跑） |
 | `test/score.test.js` | 打分模型单测 |
 | `test/checkup.test.js` | 四维体检模型单测 |
 | `test/ledger.test.js` | 信号账本与回测模型单测 |
@@ -728,7 +837,7 @@ dragon-radar/
 | GET | `/api/token/:chainId/:address` | 单币详情；榜单里没有则现拉一次行情并单独打分 |
 | GET | `/api/checkup/:chainId/:address` | 四维体检。参数 `capital`（用于仓位倒推，默认 10000）、`force=1` 绕过缓存。结果缓存 6 小时（深检 24 小时） |
 | GET | `/api/price?address=` | 单币实时报价，缓存 30 秒 |
-| GET | `/api/backtest` | 抓龙胜率。参数 `horizon`（`15m` / `1h` / `6h` / `24h`，默认 `1h`）、`why`（`all` / `first` / `upgrade`）、`chain`、`limit`。返回汇总、样本明细、指数曲线与口径常量。基准在 `summary.benchmark`：`marketReturn` 是等权榜单指数（基准本体），`medianReturn` 是中位口径参照 |
+| GET | `/api/backtest` | 抓龙胜率。参数 `horizon`（`15m` / `1h` / `6h` / `24h`，默认 `1h`）、`why`（`dragon` / `all` / `first` / `upgrade`，默认 `dragon`）、`chain`、`limit`。返回汇总、样本明细、指数曲线与口径常量。基准在 `summary.benchmark`：`marketReturn` 是等权榜单指数（基准本体），`medianReturn` 是中位口径参照。出场规则在 `summary.tp`：`threshold` 是止盈线、`rate` 是触发率、`median` 是止盈笔的收益中位、`holdMedian` 是持满视界那批的收益中位；每条明细带 `reason`（`tp` 止盈 / `time` 持满视界），标签在 `reasonLabels` |
 | POST | `/api/backtest/reset` | 清空信号账本重新积累（不影响榜单与自选） |
 | GET | `/api/watchlist` | 读取自选清单 |
 | POST | `/api/watchlist` | 加入自选，JSON 体 `{ tokenAddress, chainId, symbol }` |
@@ -745,7 +854,9 @@ npm test
 结果（本机实测）：
 
 - `test/score.test.js`：12 项通过。覆盖分级映射连续性、分数恒为 0 至 100 的整数且无 NaN、
-  深度与市值比单调性、未成熟窗口不影响风险判定等。
+  深度与市值比单调性、未成熟窗口不影响风险判定等。所有时间相关判定都走注入的 `now`，
+  因子内部不读挂钟；`fVolBurst` 曾经自己调 `Date.now()`，导致同一组夹具的分数取决于
+  跑测试的时刻（夹具里的「3 分钟新池」其实被当成 24 小时老池），已改为接收 `now`。
 - `test/checkup.test.js`：49 项通过。覆盖四维体检模型：安全硬红线与「所有权已放弃则
   owner 类风险降级」的对照、仿盘与「自己就是龙头」的区分、缺失合约数据按最高风险处理；
   五个传播阶段的判定与持币地址增量的方向性；集中度剔除池子与销毁地址前后的差异、
@@ -753,38 +864,53 @@ npm test
   反向护栏、「人少且池子是唯一出口」判死与「大市值高集中」不判死的对照；仓位取三者
   最小值、止损距离随阶段变化、阶段系数与致命项归零；缺数据时数值字段必须显式置空
   （不能留成 undefined，那会被渲染成「前十大 undefined%」这种像结论的东西）；
-  以及任意夹具组合下不产生 NaN 或越界值。
-- `test/ledger.test.js`：34 项通过。覆盖信号账本与前瞻回测：首现信号去重、档位升级信号只在
-  龙头候选及以上开仓、价格 ≤ 0 拒绝开仓也拒绝结算、四个视界各自独立结算、掉榜后用本地观测
-  序列回补、超过 48 小时记流失且不混进胜率分母、榜单指数只在单轮样本足够时记点并剔除
-  单轮 10 倍以上的脏点、指数必须保留亚 0.01% 的轮间收益（否则整条线永远停在 1.0）、
-  等权口径与中位口径必须同时记录、等权基准不得与胜率同义（中位为 0 而等权为正时
-  「跑赢基准」必须真的低于胜率）、标的够多时单轮 10% 截尾必须挡得住脏点、
-  观测序列必须按 5 分钟窗口累积（按间隔判重会让序列永远只有 1 个点，最大浮亏与掉榜回补
-  一起失效）、旧版本账本必须重置（不能一条指数上混两种口径）、
-  区间内无采样点时指数收益必须为 null、样本不足 30 笔时拒绝给结论、
-  超额收益必须等于信号收益减同期指数收益、以及任意夹具组合下统计结果不出现 NaN 或 undefined。
-- `test/engine.test.js`：111 项通过。在进程内伪造 `self` / `localStorage` / `fetch`，
+  以及任意夹具组合下不产生 NaN 或越界值。夹具的基准时间取真实当前时间而不写死日期：
+  年龄判定读的是 `Date.now()`，写死日期会让「池龄 2 小时」这条用例随日子推移静默漂成
+  传播期（2026-09-25 16:00Z 起真的漂过一次）。
+- `test/ledger.test.js`：46 项通过。覆盖信号账本与前瞻回测。
+  入场：首现信号去重、档位升级信号只在龙头候选及以上开仓、「只买真龙」这条腿只在真龙档开仓
+  （非真龙档一律不开，升到真龙才补开，且不重复开已有的一条）。
+  出场：止盈优先于视界（未到点也可能已成交）、成交时点必须是触线那一刻而不是本轮扫描时刻、
+  止盈按止盈线价成交而不是跳空后那口价、止盈只在各自视界的窗口内生效（15 分钟腿不吃 20 分钟的
+  冲高）、到点时价格仍在线上也必须按止盈记（否则线上规则会跑赢自己设的上限）、
+  四条腿在一次冲高中一起终结、止盈线是导出常量、触发率与「持满视界那批」的中位收益一起给出。
+  结算：价格 ≤ 0 拒绝开仓也拒绝结算、四个视界各自独立结算、掉榜后用本地观测序列回补、
+  超过 48 小时记流失且不混进胜率分母。
+  基准：榜单指数只在单轮样本足够时记点并剔除单轮 10 倍以上的脏点、指数必须保留亚 0.01% 的
+  轮间收益（否则整条线永远停在 1.0）、等权口径与中位口径必须同时记录、等权基准不得与胜率同义
+  （中位为 0 而等权为正时「跑赢基准」必须真的低于胜率）、标的够多时单轮 10% 截尾必须挡得住脏点、
+  区间内无采样点时指数收益必须为 null。
+  其他：观测序列必须按 5 分钟窗口累积（按间隔判重会让序列永远只有 1 个点，最大浮亏与掉榜回补
+  一起失效）、改口径的旧版本必须重置而只加字段的旧版本就地升版（v2 样本不能白丢）、
+  样本不足 30 笔时拒绝给结论、超额收益必须等于信号收益减同期指数收益、
+  以及任意夹具组合下统计结果不出现 NaN 或 undefined。
+- `test/engine.test.js`：121 项通过。在进程内伪造 `self` / `localStorage` / `fetch`，
   加载真实的 `lib/` 与 `src/`，跑完整链路：建候选池、取行情、打分、落盘、
   第二轮用真实区间增量重算量能、榜单筛选、自选豁免质量地板、适配层全部端点，
-  以及账本在浏览器端的前瞻记账（开仓价必须是首次上榜那一刻的真实价格，不能是后来的价格）、
-  账本独立落盘、`/api/backtest` 的视界与信号类型参数、非法视界回落、清空账本。
+  以及账本在浏览器端的前瞻记账（开仓价必须是首次上榜那一刻的真实价格，不能是后来的价格；
+  真龙这条腿的开仓价必须与同标的的其他腿一致，不能各记各的）、
+  账本独立落盘、`/api/backtest` 的视界与信号类型参数（默认口径必须是 `dragon`）、
+  非法视界回落、出场原因与止盈触发率一并透出、清空账本。
   不需要网络。
 
-另外两个冒烟测试（需要 `jsdom`）：
+另外三个冒烟测试（需要 `jsdom`）：
 
-- `npm run test:frontend`：56 项通过。先用 `npm start` 起服务，再用 jsdom 跑真实
+- `npm run test:frontend`：58 项通过。先用 `npm start` 起服务，再用 jsdom 跑真实
   `public/app.js`，断言卡片、龙虎榜、筛选、追踪页、模型页、抓龙胜率页都真的渲染出来了，
   并核对服务端在空账本时返回的胜率与超额都为 `null` 而不是 0。
+  抓龙胜率页另有两条纪律：默认口径必须是「只买真龙」四个 chip 里的那一个，
+  以及页面上必须写明出场规则是 +100% 止盈且不设止损线（写了止损线就说明口径漂了）。
   **注意**：端口 8791 的请求不要走系统代理。若本机设有 `http_proxy` / `https_proxy`，
   请先清掉或把 `127.0.0.1` 加进 `no_proxy`，否则 Node 会把回环请求发给代理，
   报 `ECONNREFUSED`（详见 Q13 第 4 条与注意事项）。
-- `node test/static.smoke.js`：117 项通过。直接用 `docs/` 里构建出来的那一整套脚本，
+- `node test/static.smoke.js`：119 项通过。直接用 `docs/` 里构建出来的那一整套脚本，
   不需要后端、不需要网络，断言「真正会部署上去的那份产物」能自己扫描、自己算分、
   自己渲染，并覆盖链筛选、搜索、行展开、手动刷新、四维体检（含 Solana 池子储备剔除）、
   面板跨轮重绘保持展开、风控源未收录该合约时的缺数据渲染（不出现 undefined，
   不把缺数据假报成「常态」），以及抓龙胜率页的渲染纪律（样本不足时只报计数不给胜率、
-  切视界与切信号类型都不崩、账本确实落在独立的 localStorage 键上）。
+  信号类型必须是「只买真龙 / 档位升级 / 首现 / 全部」四个且默认落在真龙那一个、
+  页面上写出 +100% 止盈与不设止损、切视界与切信号类型都不崩、
+  账本确实落在独立的 localStorage 键上）。
 - `npm run test:live`：本次实测 15 项通过（随线上标的略有浮动）。把线上实际发布的那份文件下载到
   临时目录，用真实网络跑一遍：断言线上版本能完成首轮扫描、渲染卡片、并对首个标的跑通
   四维体检、给出结论与仓位、交代集中度重算口径。验的是「用户浏览器实际拿到的东西」，
@@ -1490,15 +1616,20 @@ The replacement is **prospective recording plus later settlement**:
    all eight factor scores, market cap, pool depth, pool age, confidence, risk deduction) is
    recorded together with the real price then. This is a **first-sighting signal**.
 2. When a token first reaches Candidate or better, an **upgrade signal** is recorded as well.
-   The two tiers are reported separately, which is the only way to tell whether "the radar
-   notices early" or "the radar confirms correctly" is worth more.
-3. Once the 15-minute / 1-hour / 6-hour / 24-hour horizons come due, the signal is settled at the
+3. When a token reaches the **Dragon** tier, a **dragon signal** is recorded too. This is the
+   default call on the page, i.e. the "only buy true dragons" leg.
+4. All three legs share **exactly the same exit rule** (see 3c.3): a touch of the take-profit line
+   inside the horizon window is filled there, everything else is held to the horizon. Reporting the
+   three legs separately is the only way to tell whether "the radar notices early" or "the radar
+   confirms correctly" is worth more, and because the exit rule is held constant the difference
+   between two legs comes from the entry gate alone.
+5. Once the 15-minute / 1-hour / 6-hour / 24-hour horizons come due, the signal is settled at the
    real price at that moment. **The signal is recorded first and the price is fetched afterwards**,
    so there is no look-ahead bias.
 
-### 3c.2 Three numbers that must ship together
+### 3c.2 Four numbers that must ship together
 
-A win rate on its own can always be made to look good, so the module binds three things together
+A win rate on its own can always be made to look good, so the module binds them together
 and the page gives you no way to take one without the others.
 
 | Metric | What it answers | What goes wrong without it |
@@ -1506,11 +1637,118 @@ and the page gives you no way to take one without the others.
 | Win rate | Share of settled samples with positive return | In a broad rally, buying blind also gives a high win rate |
 | Board index benchmark | Equal-weight round-over-round return of every continuously listed token (rebalanced each round), chained into a reference line | You cannot separate "the radar picks well" from "the whole market was pumping" |
 | Attrition rate | Signals that came due but never got a price | Tokens that fell off the board are probably the ones that died; dropping them inflates the win rate |
+| Take-profit trigger rate | Share of the batch that exited by touching the take-profit line | Once a take-profit exists, the win rate can be inflated by banking gains early; without the trigger rate you cannot tell "picks well" from "cashes out early" |
 
 **Excess return = signal return - board index return over the same window.** That is what answers
 "does the radar beat the average of its own universe".
+**The take-profit trigger rate must be read next to the win rate** -- that is the discipline the
+exit rule added once it became part of the strategy.
 
-### 3c.3 Five non-negotiable rules
+### 3c.3 Strategy: only true dragons, take profit at a double
+
+The page's default question is a concrete strategy question: **buy only the Dragon tier, take profit
+at +100% (a double)** -- does it actually make money? This section lays out the trade-offs behind the
+entry gate and behind the exit rule, because neither should be guessed.
+
+**Entry gate: Dragon only, no additional conditions.** The moment you add a filter you can no longer
+say whether the return came from "true dragon" or from the filter. This leg is recorded from ledger
+v3 onwards and is **never back-filled** -- back-filling would mean using later prices as entry
+evidence.
+
+**Exit rule: identical across all three legs.** Holding the exit rule fixed means the difference
+between two legs comes from the entry gate alone. If only the dragon leg took profit while the
+control legs did not, the observed difference would be contaminated by the exit rule.
+
+**The take-profit level is measured, not chosen.** Returns in this market are extremely right-skewed:
+median 0%, the mean carried entirely by a handful of large winners (single best +1047.8%). So **you
+cannot pick the level by win rate** -- see the first column below, where the win rate is the same for
+every take-profit line, because capping never turns a loss into a win.
+
+The calibration method is **capping**: clip every settled sample at the candidate level,
+`r' = min(r, level)`, then recompute the statistics. This is not hand-waving, the reason is hard:
+**any sample that settles above the line must have crossed that line on the way**, so the take-profit
+would have filled at the line. For that half of the sample, capping is an **exact** replay; only
+samples that settle below the line can be understated. So the **cost of the line is measured exactly
+and the benefit is only ever understated**. A bonus: the sample is every settled sample, with no
+"must have an observation series" filter, which sidesteps the severe bias described in the next
+section.
+
+At the 1-hour horizon with 238 settled samples (`node tools/tp-explore.js`):
+
+| Take-profit level | Win rate | Median return | Mean return | 10% trimmed mean | Median excess | Beats benchmark | Trigger share |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| no take-profit | 39.5% | 0.0% | **+5.3%** | **-6.0%** | -0.6% | 47.5% | -- |
+| +10% | 39.5% | 0.0% | -14.9% | -8.2% | -1.1% | 45.8% | 21.8% |
+| +15% | 39.5% | 0.0% | -13.8% | -7.5% | -0.8% | 47.1% | 20.6% |
+| +20% | 39.5% | 0.0% | -12.9% | -6.9% | -0.8% | 47.1% | 16.4% |
+| +30% | 39.5% | 0.0% | -11.5% | -6.4% | -0.6% | 47.5% | 12.6% |
+| +40% | 39.5% | 0.0% | -10.3% | -6.1% | -0.6% | 47.5% | 10.9% |
+| +50% | 39.5% | 0.0% | -9.3% | **-6.0%** | -0.6% | 47.5% | 8.0% |
+| +80% | 39.5% | 0.0% | -7.3% | -6.0% | -0.6% | 47.5% | 6.3% |
+| **+100% (in use)** | 39.5% | 0.0% | -6.1% | **-6.0%** | -0.6% | 47.5% | 5.5% |
+| +200% | 39.5% | 0.0% | -2.7% | -6.0% | -0.6% | 47.5% | 2.5% |
+
+There is exactly one way to read this: **the trimmed mean column**. The mean is dominated by a
+handful of winners (one +1047.8% sample moves it by over ten points on its own); the trimmed mean is
+the real cost of clipping the upside. It gives a blunt answer:
+
+- no take-profit: -6.0%
+- **+40% and below: strictly worse than no take-profit** (+30% falls to -6.4%, +15% to -7.5%)
+- **+50% and above: back to -6.0%, level with no take-profit**
+
+So the line is "either do not set one, or set it high". **+100%** is chosen over +50% because above
++50% the trimmed mean is already a tie, and the remaining criterion is **what the trigger means**:
++100% ("only sell on a double") is the one level with no ambiguity at all, and it triggers on 5.5%
+of samples -- it only touches the genuinely rare doubling event and leaves the ordinary distribution
+alone.
+
+This table is a **snapshot at 01:29 local time on 2026-09-26, over 238 settled samples**. The ledger
+accumulates prospectively, so the numbers drift a little with every additional sample (the no
+take-profit row read -5.1% at 230 samples and -6.0% at 238). The **conclusion is steadier than the
+numbers**: the crossing point of the trimmed mean has always sat between +40% and +50% and has never
+fallen to +30% or below. So remember the conclusion rather than the digits.
+
+To reproduce it yourself: `data/` is not distributed (it is local runtime output, see the file list
+in section 8), so a fresh clone starts with an empty ledger and
+`node tools/tp-explore.js` will only show whatever you have accumulated from zero. Given the same
+ledger the tool is deterministic; given a different ledger it reports that ledger's numbers, which is
+exactly the behaviour it should have.
+
+**The fill is taken at the line, not at the gapped price you happen to observe.** Two reasons: a
+limit order resting on the line fills at the line; and this makes the live rule **exactly equivalent**
+to the offline capping calibration, so the two cannot silently drift apart. A real fill is only ever
+better. By the same logic, if a horizon comes due while the price is still above the line (this
+happens for long horizons with missing observations, the 15-minute leg most of all) it is also
+recorded as a take-profit at the line -- otherwise the live rule would beat the cap it sets itself.
+
+**The stop-loss was rejected, and the reason is not "every metric got worse"** (measurements are
+mixed). On the same batch (148 samples with an observation series):
+
+| Combination | Win rate | Median return | Mean return | 10% trimmed mean | Median excess |
+| --- | --- | --- | --- | --- | --- |
+| no take-profit / no stop | 22.3% | -1.1% | -9.1% | -12.4% | -3.9% |
+| no take-profit / -20% stop | 20.9% | -1.4% | **-5.1%** | **-9.5%** | **-4.6%** |
+| no take-profit / -35% stop | 22.3% | -1.1% | -5.6% | -10.8% | -3.9% |
+
+The stop does clip the left tail (mean -9.1% to -5.1%, trimmed mean -12.4% to -9.5%), but the
+**win rate slips (22.3% to 20.9%), the median return does not improve (-1.1% to -1.4%) and the
+median excess is worse (-3.9% to -4.6%)**. It improves "how much you can lose", not "whether you
+make anything". The decisive argument is
+structural: **a stop can only fire on a timestamp that has an observation point**, and the tokens
+that genuinely need stopping (pool pulled, token going to zero) usually leave the candidate pool
+first and stop producing observation points, so the stop never fires on them. What it does fire on
+is "still alive, just volatile". This module therefore sets no stop-loss.
+
+**Two costs, stated plainly:**
+
+1. Take-profit clips the upside at +100%, so "best" can never exceed the line and the "doubled or
+   more" bucket is **the same set of samples** as "take-profit triggered". That is not a defect, it
+   is what a take-profit costs.
+2. Take-profit is evaluated on 5-minute observation points, so a spike that pumps and gives back
+   inside a 5-minute window is invisible. The **trigger rate is therefore systematically
+   understated** and the reported return is a conservative lower bound.
+
+### 3c.4 Five non-negotiable rules
 
 - **A price must be positive to settle.** `priceUsd <= 0` is refused at settlement and no signal is
   opened at such a price either. On chain data, 0 and negative values mean the pool is gone or the
@@ -1535,7 +1773,7 @@ The ledger also records the **maximum adverse excursion** (worst unrealised draw
 and settlement) and reports the quantile distribution. A return without a drawdown makes a high win
 rate look far more comfortable than the trade actually was: earning 50% requires surviving -60% first.
 
-### 3c.4 How the board index is computed
+### 3c.5 How the board index is computed
 
 Each round takes every token present in both the previous and the current round, computes its
 round-over-round return, applies a 10% trim (10% off each tail; no trim below 20 tokens), takes the
@@ -1560,9 +1798,15 @@ single dirty point -- a price-unit change that happens to slip under the 10x thr
 the entire benchmark line.
 
 Known limitation, stated openly: tokens entering the board have no previous price and do not count
-for that round, and tokens leaving the board stop counting after their last round. The index is
-therefore biased toward long-lived tokens, which is the same survivorship problem the signal ledger
-faces. Both are affected in the same direction, so the comparison still holds.
+for that round, and tokens leaving the board stop counting after their last round. **This is worse
+than the survivorship problem previously assumed here.** Observation points only exist while a token
+stays in the candidate pool, and the pool is drawn from "latest boosts / latest token profiles", so
+**the tokens that pump hardest leave the pool fastest**. Measured on the same ledger: the batch that
+stayed in the pool (and therefore has an observation series) has a median 1-hour return of **-0.1%**,
+while the batch that left and was settled by a backfilled price has a median of **+13.6%** -- a
+13-point gap. The board index is built only from tokens present in both consecutive rounds, so it
+sees only the stayers and reads low; **excess return is therefore overstated. This is a known defect
+and is not fixed yet**; fixing it means fetching an extra price for every dropped token each round.
 
 One further property is easy to miss: **the chained product of per-round returns is not the return of
 a typical token over the whole window.** The former samples "a typical minute", the latter "a typical
@@ -1572,7 +1816,7 @@ median variant of the index is a horizontal line in calm markets -- which is pre
 serve as the benchmark. The equal-weighted variant measures "the typical move of the pool per minute",
 not "the cumulative move of a typical token".
 
-### 3c.5 How to use it
+### 3c.6 How to use it
 
 The ledger is an account that takes time to accumulate. The numbers build up gradually, and an
 empty ledger right after deployment is by design, not a failure.
@@ -1581,33 +1825,56 @@ empty ledger right after deployment is by design, not a failure.
 npm start                                 # the service records signals every scan while it runs
 node tools/ledger-report.js               # in another terminal, offline read of data/ledger.json
 node tools/ledger-report.js --horizon=1h  # one horizon only
+node tools/ledger-report.js --why=dragon  # "true dragons only" (the strategy call, also the default)
 node tools/ledger-report.js --why=upgrade --chain=solana
+node tools/tp-explore.js                  # the take-profit calibration table (offline, read-only)
 ```
 
-In the page: go to "Hit Rate" and switch horizon (15m / 1h / 6h / 24h) and signal type
-(all / first sighting / upgrade). Both read the same `lib/ledger.js`, so the conclusions match.
+In the page: go to "Hit Rate" and switch horizon (15m / 1h / 6h / 24h) and signal call
+(dragon only / upgrade / first sighting / all). Both read the same `lib/ledger.js`, so the
+conclusions match.
 
 Rough timeline: the 15-minute horizon reaches a usable sample within about half an hour; the
 1-hour horizon takes about an hour; the 6-hour and 24-hour horizons need their own period, with
-24 hours taking a full day.
+24 hours taking a full day. **The Dragon tier is genuinely rare** (about 5%: 15 out of 284 signals
+in the snapshot taken at 01:29 local on 2026-09-26), so the dragon call accumulates the slowest --
+that is an inherent cost of the call,
+not a collection failure.
 
 **An inherent limit of pure static deployment:** static mode only collects while the page is open.
 Periods with the page closed have no observations, and signals that cannot be priced when due count
 as attrition rather than as neutral. For continuous collection, run the Node mode as a service.
 
-### 3c.6 Known biases
+### 3c.7 Known biases
 
 - The candidate pool is built from boost feeds, latest token profiles, keyword expansion and your
   watchlist. It is **not the whole market**. This statistic only says whether the signal is worth
   anything inside that pool; it does not extrapolate to the market.
-- The board index is biased toward long-lived tokens (see 3c.4).
+- **The board index reads systematically low, so excess return is overstated. This is far more
+  serious than previously assumed here.** Observation points only exist while a token stays in the
+  candidate pool, and the pool is drawn from "latest boosts / latest token profiles" -- so **the
+  tokens that pump hardest leave the pool fastest**. Measured on the same ledger: the batch that
+  stayed in the pool (and therefore has an observation series) has a median 1-hour return of
+  **-0.1%**, while the batch that left and was settled by a backfilled price has a median of
+  **+13.6%** -- a 13-point gap. The board index is built only from tokens present in both
+  consecutive rounds, sees only the stayers, and reads low; excess return is therefore inflated.
+  **This is a known defect and is not fixed yet**; fixing it means fetching an extra price for every
+  dropped token each round.
+- By the same token, any path-dependent measurement built on the observation series (take-profit
+  trigger rate, for instance) only sees the stayers. Do not draw conclusions from those numbers.
+  The take-profit level is calibrated with the capping method precisely because that method does not
+  depend on the observation series and so sidesteps this bias.
 - Settlement uses DexScreener's public quote, not an executable price. Real fills would also pay
   slippage and fees, so what is reported is the **directional return of the signal**, not a
   realisable return.
 - The 15-minute horizon is the noisiest. At equal sample size, longer horizons are more reliable
   but take longer to accumulate.
+- **Version semantics:** the ledger carries a version. Upgrades that only add fields without changing
+  a definition (v2 to v3, which added the dragon leg and the exit reason) are applied **in place and
+  keep every sample**; upgrades that change a definition (v1 to v2, which changed the index) force a
+  **reset**, because mixing two definitions on one line is worse than losing data.
 
-### 3c.7 First live readings: why a single snapshot is not a result
+### 3c.8 First live readings: why a single snapshot is not a result
 
 What follows is **actually measured**, not an illustration. After the calibration fix the service ran
 continuously from 21:42 on 2026-09-25, exporting the same ledger every 10 minutes. Excerpt of the raw
@@ -1925,6 +2192,7 @@ re-run `npm run build:static`.
 | `tools/build-static.js` | Static site build script |
 | `tools/serve-static.js` | Local preview server for the static site |
 | `tools/ledger-report.js` | Offline read of `data/ledger.json`, prints the hit-rate report (read-only) |
+| `tools/tp-explore.js` | Take-profit / stop-loss calibration: the capping table and the observation-walk table (offline, read-only, re-runnable) |
 | `test/score.test.js` | Scoring model unit tests |
 | `test/checkup.test.js` | Checkup model unit tests |
 | `test/ledger.test.js` | Signal ledger and backtest model unit tests |
@@ -1967,7 +2235,10 @@ Results measured on the development machine:
 
 - `test/score.test.js`: 12 assertions pass. Covers grade band continuity, scores always
   being integers from 0 to 100 with no NaN, depth to market cap monotonicity, and immature
-  windows not affecting the risk decision.
+  windows not affecting the risk decision. Every time-dependent decision goes through the
+  injected `now`; no factor reads the wall clock. `fVolBurst` used to call `Date.now()` itself,
+  which made the score for one fixed fixture depend on when the suite was run (the "3-minute-old
+  pool" in the fixture was in fact treated as a 24-hour-old one); it now takes `now`.
 - `test/checkup.test.js`: 49 assertions pass. Covers the checkup model: safety hard red lines
   and the contrast with "ownership renounced so owner-gated risks are downgraded", copycat
   detection versus "this is the leader itself", and missing contract data being treated as
@@ -1980,43 +2251,61 @@ Results measured on the development machine:
   and fatal findings forcing size to zero; numeric fields being explicitly null rather than
   undefined when data is missing (an undefined would render as "top-10 undefined%", which reads
   like a conclusion); plus no NaN or out-of-range output across arbitrary fixture combinations.
-- `test/ledger.test.js`: 34 assertions pass. Covers the signal ledger and forward test:
-  first-sighting dedup, upgrade signals only opening at Candidate or better, a price <= 0
-  refusing both entry and settlement, the four horizons settling independently, backfilling
-  from the local observation series after a token leaves the board, the 48-hour give-up being
-  counted separately and never merged into the win-rate denominator, the board index only
-  recording a point when a round has enough tokens and dropping dirty points beyond a 10x
-  single-round move, the index retaining sub-0.01% round returns (otherwise the line would sit at
-  1.0 forever), both the equal-weighted and the median variant being recorded, the equal-weighted
-  benchmark never collapsing into the win rate (when the median is 0 and the equal-weighted mean is
-  positive, "beat the benchmark" must genuinely fall below the win rate), the 10% per-round trim
-  holding up against dirty points once there are enough tokens, the observation series
-  accumulating by bucket (deduplicating by elapsed time would leave it at a single point and
-  silently break both the drawdown and the backfill), a ledger written by an older version being
-  reset rather than mixing two index definitions on one line, index return being `null` when no
-  sample falls in the window, refusing to state a win rate below 30 samples, excess return
-  equalling signal return minus index return, and no NaN or undefined in any statistic across
-  arbitrary fixture combinations.
-- `test/engine.test.js`: 111 assertions pass. Fakes `self`, `localStorage` and `fetch` in
+  The fixture clock is taken from the real current time rather than a hardcoded date: the age
+  decision reads `Date.now()`, so a hardcoded date makes the "2-hour-old pool" case silently drift
+  into the spreading stage as days pass (it really did drift, from 2026-09-25 16:00Z onward).
+- `test/ledger.test.js`: 46 assertions pass. Covers the signal ledger and forward test.
+  Entry: first-sighting dedup, upgrade signals only opening at Candidate or better, and the "true
+  dragons only" leg opening only on the Dragon tier (never on lower tiers, opened when a token is
+  upgraded to Dragon, and never duplicated).
+  Exit: take-profit taking precedence over the horizon (a fill can happen before the horizon is
+  due), the fill timestamp being the moment the line was touched rather than the scan round, the
+  fill being taken at the line rather than at the gapped price, the take-profit window being
+  per-horizon (the 15-minute leg does not eat a spike at minute 20), a price still above the line at
+  due also being recorded as a take-profit (otherwise the live rule beats the cap it sets itself),
+  one spike ending all four legs together, the line being an exported constant, and the trigger rate
+  being reported alongside the median return of the held-to-horizon batch.
+  Settlement: a price <= 0 refused both as an entry and at settlement, the four horizons settling
+  independently, backfilling from the local observation series after a token leaves the board, and
+  the 48-hour give-up being counted separately and never merged into the win-rate denominator.
+  Benchmark: the board index only recording a point when a round has enough tokens and dropping
+  dirty points beyond a 10x single-round move, the index retaining sub-0.01% round returns
+  (otherwise the line would sit at 1.0 forever), both the equal-weighted and the median variant
+  being recorded, the equal-weighted benchmark never collapsing into the win rate (when the median is
+  0 and the equal-weighted mean is positive, "beat the benchmark" must genuinely fall below the win
+  rate), the 10% per-round trim holding up against dirty points once there are enough tokens, and
+  index return being `null` when no sample falls in the window.
+  Other: the observation series accumulating by bucket (deduplicating by elapsed time would leave it
+  at a single point and silently break both the drawdown and the backfill), a definition-changing
+  older version being reset while a field-adding version is upgraded in place (v2 samples must not be
+  thrown away), refusing to state a win rate below 30 samples, excess return equalling signal return
+  minus index return, and no NaN or undefined in any statistic across arbitrary fixture
+  combinations.
+- `test/engine.test.js`: 121 assertions pass. Fakes `self`, `localStorage` and `fetch` in
   process, loads the real `lib/` and `src/`, and runs the whole pipeline: universe building,
   quote fetching, scoring, persistence, a second round recomputing volume from a real
   interval delta, board filtering, watchlist exemption from the quality floor, and every
   adapter endpoint. Also covers the ledger's browser-side recording (the entry price must be the
-  real price at first appearance, never a later one), its separate localStorage key, the
-  `/api/backtest` horizon and signal-type parameters, invalid-horizon fallback, and ledger reset.
-  No network needed.
+  real price at first appearance, never a later one; the Dragon leg's entry price must match the
+  other legs on the same token rather than each leg keeping its own), its separate localStorage
+  key, the `/api/backtest` horizon and signal-type parameters (whose default must be `dragon`),
+  invalid-horizon fallback, the exit reason and take-profit trigger rate being exposed alongside
+  the rest, and ledger reset. No network needed.
 
 Three checks require `jsdom`:
 
-- `npm run test:frontend`: 56 assertions pass. Start the server with `npm start`, then run
+- `npm run test:frontend`: 58 assertions pass. Start the server with `npm start`, then run
   the real `public/app.js` under jsdom and assert that cards, the table, filters, the
   tracking view, the model view and the hit-rate view actually render, and that the server
   returns `null` rather than 0 for win rate and excess while the ledger is empty.
+  The hit-rate view adds two disclosure checks: the default basis must be the "true dragons only"
+  one among four chips, and the page must state that the exit rule is a +100% take-profit with no
+  stop-loss line (a stop-loss line on the page would mean the strategy has drifted).
   **Note**: requests to port 8791 must not go through a system proxy. If `http_proxy` or
   `https_proxy` is set on the machine, clear it or add `127.0.0.1` to `no_proxy`, otherwise
   Node sends the loopback request to the proxy and fails with `ECONNREFUSED` (see Q13 item 4
   and the Caveats section).
-- `node test/static.smoke.js`: 117 assertions pass. Runs the exact set of scripts built into
+- `node test/static.smoke.js`: 119 assertions pass. Runs the exact set of scripts built into
   `docs/`, with no backend, and asserts that the artifact that actually ships can scan, score
   and render by itself. It also covers chain filtering, search, row expansion, manual refresh,
   and the full checkup path against stubbed GoPlus / honeypot.is / RugCheck responses on both
@@ -2025,7 +2314,9 @@ Three checks require `jsdom`:
   missing-data path when the risk source has no record of the contract: no `undefined` may
   appear in the panel and a missing feed may not be reported as a neutral stage. Finally it
   covers the hit-rate page's disclosure rules: counts but no win rate while the sample is
-  short, no crash when switching horizon or signal type, and a ledger stored under its own
+  short, four signal-type chips reading "true dragons only / upgrades / first sightings / all"
+  with the Dragon one active by default, a +100% take-profit and no stop-loss line stated on the
+  page, no crash when switching horizon or signal type, and a ledger stored under its own
   localStorage key.
 - `npm run test:live`: 15 assertions pass in the latest run (varies slightly with the live
   universe). Downloads
@@ -2035,7 +2326,7 @@ Three checks require `jsdom`:
   what the user's browser literally receives; because it depends on the internet and
   third-party APIs it is a pre-delivery check rather than a CI job.
 
-All three need `jsdom`:
+The three checks above need `jsdom`:
 
 ```bash
 npm i -D jsdom

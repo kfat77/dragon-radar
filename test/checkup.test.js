@@ -19,7 +19,10 @@ const {
   DEFAULT_PROFILE, STAGE_STOP,
 } = require('../lib/checkup');
 
-const NOW = Date.parse('2026-09-25T12:00:00Z');
+// 夹具基准时间必须跟着挂钟走，不能写死。checkup 的年龄判定用的是 Date.now() 而不是
+// 注入的 now，所以「池龄 2 小时」只有在 NOW 等于真实当前时间时才成立；写死日期的那一版
+// 在 2026-09-25 16:00Z 之后把 2 小时算成了 7 小时，萌芽期用例会静默漂成传播期。
+const NOW = Date.now();
 const BURN_DEAD = '0x000000000000000000000000000000000000dead';
 const PAIR = '0xpair';
 

@@ -102,7 +102,8 @@
     if (r.path === '/api/backtest') {
       return ok(E.backtest({
         horizon: q.horizon || '1h',
-        why: q.why || 'all',
+        // 默认口径是策略本身：只买真龙。与服务端保持同一个默认值，两种形态才等价。
+        why: q.why || 'dragon',
         chain: q.chain || '',
         limit: q.limit || 60,
       }));

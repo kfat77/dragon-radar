@@ -2,17 +2,21 @@
 /**
  * 抓龙胜率离线报告
  *
- *   node tools/ledger-report.js                    读取 data/ledger.json，打印全部视界的统计
- *   node tools/ledger-report.js --horizon=1h       只看某个视界
- *   node tools/ledger-report.js --why=upgrade      只看升级信号
- *   node tools/ledger-report.js --chain=solana     只看某条链
- *   node tools/ledger-report.js --file=path.json   指定账本文件
+ *   node tools/ledger-report.js                      读取 data/ledger.json，打印全部视界的统计
+ *   node tools/ledger-report.js --horizon=1h         只看某个视界
+ *   node tools/ledger-report.js --why=dragon         只看「只买真龙」（策略口径，默认）
+ *   node tools/ledger-report.js --why=upgrade        只看档位升级信号（对照）
+ *   node tools/ledger-report.js --why=first          只看首现信号（对照）
+ *   node tools/ledger-report.js --chain=solana       只看某条链
+ *   node tools/ledger-report.js --file=path.json     指定账本文件
  *
  * 为什么要有它：账本是「先记录、后结算」的，数字是一点点攒出来的。想随时看进度不必开着服务、
  * 也不必开页面 —— 直接读已经落盘的账本即可。本工具只读不写，不会改动任何数据。
  *
  * 报告口径（与页面上完全一致，同一个 lib/ledger.js）：
  *   胜率、同期榜单指数基准、样本流失率三件事必须一起读，缺一个都会误导。
+ *   出场规则三条腿一致：窗口内触及 +100%（翻倍）即以那一笔成交（止盈），其余持满视界，不设止损。
+ *   所以「止盈触发率」必须和胜率并排看 —— 胜率高有可能是靠提前落袋换来的。
  *   样本不足 MIN_SAMPLE 笔时只打印计数与「样本积累中」，不给结论。
  */
 'use strict';
@@ -72,7 +76,8 @@ function main() {
   }
 
   const onlyH = arg('horizon', '');
-  const onlyWhy = arg('why', 'all');
+  // 默认口径就是策略本身：只买真龙。要看对照组时显式传 --why=upgrade / first。
+  const onlyWhy = arg('why', L.DRAGON_GRADE);
   const chain = arg('chain', '');
   const horizons = onlyH ? L.HORIZONS.filter((h) => h.key === onlyH) : L.HORIZONS;
   if (!horizons.length) {
@@ -81,10 +86,11 @@ function main() {
   }
 
   console.log('样本门槛：' + L.MIN_SAMPLE + ' 笔。低于门槛只报计数，不给胜率结论。');
+  console.log('出场规则：窗口内触及 +' + Math.round(L.DRAGON_TP * 100) + '% 即止盈成交，不设止损，其余持满视界。');
   console.log('');
   console.log(pad('视界', 10) + padL('已结算', 8) + padL('待结算', 8) + padL('流失', 6)
     + padL('胜率', 9) + padL('中位收益', 11) + padL('基准收益', 11)
-    + padL('中位超额', 11) + padL('跑赢基准', 10));
+    + padL('中位超额', 11) + padL('跑赢基准', 10) + padL('止盈触发', 10));
 
   for (const h of horizons) {
     const s = L.summarize(led, { horizon: h.key, why: onlyWhy, chain });
@@ -96,6 +102,7 @@ function main() {
       + padL(enough ? (s.benchmark.marketReturn == null ? '无基准' : pct(s.benchmark.marketReturn)) : '—', 11)
       + padL(enough ? (s.benchmark.medianExcess == null ? '无基准' : pct(s.benchmark.medianExcess)) : '—', 11)
       + padL(enough ? rate(s.benchmark.beatRate) : '—', 10)
+      + padL(s.tp.rate == null ? '—' : rate(s.tp.rate) + ' ' + s.tp.count + '笔', 10)
     );
   }
   console.log('');
@@ -131,6 +138,13 @@ function main() {
   if (s.dead) {
     console.log('流失 ' + s.dead + ' 笔（到期仍补不到价格，多半是池子被撤或标的归零）。'
       + '它们不计入胜率分母 —— 从统计里抹掉这批，胜率会系统性虚高。');
+  }
+  if (s.tp.rate != null) {
+    console.log('出场拆分：止盈成交 ' + s.tp.count + ' 笔（' + rate(s.tp.rate) + '，中位 ' + pct(s.tp.median) + '）'
+      + '，持满视界 ' + s.tp.holdCount + ' 笔（中位 ' + pct(s.tp.holdMedian) + '）。'
+      + '止盈触发率必须和胜率并排看 —— 胜率高有可能是靠提前落袋换来的。');
+    console.log('  止盈把上行封在 +' + Math.round(L.DRAGON_TP * 100) + '%，所以「最好」不会超过止盈线、'
+      + '「翻倍以上」必然是 0。这是止盈的代价本身，不是缺陷。');
   }
   if (s.avgMae != null) {
     console.log('平均最大浮亏 ' + pct(s.avgMae) + '（' + s.maeN + ' 笔有观测序列）。'

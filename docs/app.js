@@ -24,7 +24,8 @@ const store = {
   // 用户自己的总资金，默认 10000，改一次即写回本机，不发送到任何第三方。
   capital: Number(localStorage.getItem('dr.capital') || 10000) || 10000,
   // 胜率回测的视图选项。默认 1 小时视界：15 分钟噪声最大，6/24 小时要等很久才够样本。
-  bt: { horizon: '1h', why: 'all' },
+  // 默认口径是「只买真龙」—— 这是本模块要回答的策略问题，首现 / 升级两条腿保留作对照。
+  bt: { horizon: '1h', why: 'dragon' },
   _chainSig: '',
 };
 
@@ -814,6 +815,7 @@ const BT = { loading: false, last: null };
 
 const pctStr = (v) => (typeof v === 'number' && isFinite(v) ? (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%' : '—');
 const rateStr = (v) => (typeof v === 'number' && isFinite(v) ? (v * 100).toFixed(1) + '%' : '—');
+const REASON_LABEL = { tp: '止盈', time: '持满视界' };
 
 function btUrl() {
   const p = new URLSearchParams({ horizon: store.bt.horizon, why: store.bt.why, limit: '60' });
@@ -847,6 +849,7 @@ function renderBacktest() {
   const b = s.benchmark || {};
   const t = s.totals || {};
   const ix = s.index || {};
+  const tp = s.tp || {};
   const enough = !!s.sampleEnough;
   const H = esc(s.horizonLabel || '');
   const W = esc(s.whyLabel || '');
@@ -865,6 +868,11 @@ function renderBacktest() {
       ? stat('中位超额', '无基准', '同期榜单指数没有采样点')
       : stat('中位超额', pctStr(b.medianExcess), '信号收益 − 同期榜单指数', b.medianExcess >= 0 ? 'is-up' : 'is-down'))
            : stat('中位超额', '样本积累中', '不足门槛不给结论', 'is-mute'),
+    // 止盈是这一版新加的出场规则，触发率必须和胜率并排 —— 否则「胜率高」有可能是
+    // 靠提前落袋换来的，而这个代价只有触发率能暴露
+    enough && tp.rate != null
+      ? stat('止盈触发率', rateStr(tp.rate), `上限 +${Math.round((tp.threshold || 1) * 100)}% · ${tp.count || 0} 笔`)
+      : stat('止盈触发率', enough ? '—' : '样本积累中', `上限 +${Math.round((tp.threshold || 1) * 100)}%`, 'is-mute'),
     stat('待结算', String(s.waiting || 0), '视界未到，或刚落榜'),
     stat('样本流失', String(s.dead || 0), '到期仍补不到价格'),
   ].join('');
@@ -872,7 +880,8 @@ function renderBacktest() {
   const gate = enough ? '' : `<div class="radar-bt-gate">
     <b>样本积累中。</b>当前 ${H} 视界已结算 <b>${s.n || 0}</b> 笔，门槛 <b>${s.minSample || 30}</b> 笔。
     样本不足时本页只报原始计数，不给胜率 —— 几笔的胜率没有解释力，写出来比不写更误导。
-    15 分钟视界的样本积得最快，可以先看它。
+    15 分钟视界的样本积得最快，可以先看它。真龙档本身很稀有，真龙口径的样本会比首现口径慢很多，
+    这是这个口径的固有成本，不是采集出问题。
   </div>`;
 
   // 基准：把「雷达选得准」和「那阵子全市场在涨」分开的唯一办法
@@ -913,8 +922,9 @@ function renderBacktest() {
     <td class="${x.r == null ? '' : x.r >= 0 ? 'is-up' : 'is-down'}">${x.r == null ? '—' : pctStr(x.r)}</td>
     <td class="${x.ex == null ? '' : x.ex >= 0 ? 'is-up' : 'is-down'}">${x.ex == null ? '—' : pctStr(x.ex)}</td>
     <td class="is-down">${x.mae == null ? '—' : pctStr(x.mae)}</td>
+    <td>${x.reason ? esc(REASON_LABEL[x.reason] || x.reason) : '—'}</td>
     <td>${esc(STATE_LABEL[x.state] || x.state || '')}</td>
-  </tr>`).join('') || '<tr><td colspan="10">还没有记录到该视界下的信号。</td></tr>';
+  </tr>`).join('') || '<tr><td colspan="11">还没有记录到该视界下的信号。</td></tr>';
 
   // q 分位、最大不利偏移：只有收益没有回撤，胜率会显得比实际舒服
   const dist = enough ? `<div class="radar-bt-dist">
@@ -926,6 +936,8 @@ function renderBacktest() {
     <span>翻倍以上 <b>${rateStr(s.doubleRate)}</b></span>
     <span>腰斩以上 <b class="is-down">${rateStr(s.halfRate)}</b></span>
     <span>平均最大浮亏 <b class="is-down">${s.avgMae == null ? '—' : pctStr(s.avgMae)}</b>（${s.maeN || 0} 笔有观测）</span>
+    <span>止盈成交 <b>${tp.count || 0}</b> 笔 · 中位 <b>${tp.median == null ? '—' : pctStr(tp.median)}</b></span>
+    <span>持满视界 <b>${tp.holdCount || 0}</b> 笔 · 中位 <b class="${tp.holdMedian >= 0 ? 'is-up' : 'is-down'}">${tp.holdMedian == null ? '—' : pctStr(tp.holdMedian)}</b></span>
   </div>` : '';
 
   const curve = (d.series || []).length >= 2
@@ -963,10 +975,19 @@ function renderBacktest() {
           <th style="width:96px">开仓时间</th><th>标的</th><th style="width:110px">信号</th>
           <th style="width:56px">龙分</th><th style="width:88px">档位</th><th style="width:110px">入场价</th>
           <th style="width:84px">视界收益</th><th style="width:84px">超额</th>
-          <th style="width:88px">最大浮亏</th><th style="width:84px">状态</th>
+          <th style="width:88px">最大浮亏</th><th style="width:88px">出场</th><th style="width:84px">状态</th>
         </tr></thead>
         <tbody>${sampleRows}</tbody>
       </table></div>
+      <p class="radar-note" style="margin-top:10px">
+        出场规则对三条腿一视同仁：在各自视界窗口内触及 <b>+${Math.round((tp.threshold || 1) * 100)}%</b> 就以那一笔成交（记为止盈），
+        没触到就持满视界（记为持满视界），<b>不设止损</b>。三条腿用同一套出场规则，两种口径的差别才只来自入场门槛。
+        止盈线是标定出来的，不是拍的：这个市场的收益极度右偏（中位 0%、均值全靠个位数的大赢家撑着），
+        把收益按各条候选止盈线封顶重算，10% 截尾均值在 +40% 及以下都比「不止盈」更差、到 +50% 及以上才回到「不止盈」的水平 ——
+        也就是说<b>止盈线要么不设，要么设得足够高</b>，所以取 +${Math.round((tp.threshold || 1) * 100)}%（翻倍才落袋）。
+        标定过程见仓库里的 <code>tools/tp-explore.js</code>；这张表是持续前瞻累积的账本快照，
+        样本长大一轮数字会小幅漂，但交叉点一直落在 +40% 与 +50% 之间。
+      </p>
       <p class="radar-note" style="margin-top:10px">
         账本自 ${esc(t.startedAt ? ago(t.startedAt) : '尚未开始')} 起记录，共 ${t.rounds || 0} 轮扫描，
         累计开仓 ${t.opened || 0} 次、完成结算 ${t.settled || 0} 个视界，当前存续 ${t.signals || 0} 个信号。

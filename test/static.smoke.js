@@ -531,8 +531,15 @@ const SCRIPTS = ['lib/score.js', 'lib/sources.js', 'lib/security.js', 'lib/check
   const btPanel = $('[data-panel="backtest"]');
   ok('抓龙胜率页显示', !btPanel.hidden);
   ok('视界 chips 4 个', $$('[data-bt-horizons] .radar-chip').length === 4);
-  ok('信号类型 chips 3 个', $$('[data-bt-whys] .radar-chip').length === 3);
+  ok('信号类型 chips 4 个（真龙 / 升级 / 首现 / 全部）', $$('[data-bt-whys] .radar-chip').length === 4);
   ok('默认视界为 1 小时', $$('[data-bt-horizons] .radar-chip').find((b) => b.classList.contains('is-active')).dataset.horizon === '1h');
+  // 默认口径必须是策略本身：只买真龙
+  const btWhyActive = $$('[data-bt-whys] .radar-chip').find((b) => b.classList.contains('is-active'));
+  ok('默认口径为「只买真龙」', btWhyActive.dataset.why === 'dragon', btWhyActive.dataset.why);
+  ok('页面上写清了出场规则（止盈 +100%，且不设止损）',
+    /止盈/.test($('[data-panel="backtest"]').textContent)
+    && /\+100%/.test($('[data-panel="backtest"]').textContent)
+    && !/止损线/.test($('[data-panel="backtest"]').textContent));
 
   const btBody = $('[data-bt-body]');
   ok('回测面板已渲染出内容', btBody.textContent.length > 60, String(btBody.textContent.length) + ' 字');

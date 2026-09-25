@@ -332,6 +332,14 @@ eq(E.SCAN_INTERVAL_MS, 60000, '扫描周期为 60 秒');
   eq(Object.keys(dragSig.f).length, 8, '开仓快照记下八个因子分');
   eq(dragSig.r['1h'], undefined, '1 小时视界还没到点，不能有结算记录');
 
+  // 策略腿：只买真龙。DRGN 是真龙档，所以三条腿都该开着，并且共用同一个入场价快照口径
+  const dgKey = T.dragon.chain + ':' + T.dragon.addr.toLowerCase();
+  const dragLeg = led.signals['dragon|' + dgKey];
+  ok(!!dragLeg, '真龙档的「只买真龙」策略腿已开仓');
+  eq(dragLeg.why, 'dragon', '策略腿标着 dragon 口径');
+  eq(dragLeg.price0, dragSig.price0, '三条腿共用同一个入场价，差别只来自入场门槛');
+  eq(led.signals['upgrade|' + dgKey].why, 'upgrade', '升级腿同时保留作对照');
+
   const bt = await api('/api/backtest?horizon=1h&why=all');
   eq(bt.status, 200, '/api/backtest 返回 200');
   ok(!!bt.body.summary, '/api/backtest 带 summary');
@@ -352,6 +360,16 @@ eq(E.SCAN_INTERVAL_MS, 60000, '扫描周期为 60 秒');
   ok(bt.body.samples.every((x) => x.state === 'waiting' || x.state === 'settled' || x.state === 'lost'), '明细每行都带明确状态');
   ok(Array.isArray(bt.body.horizons) && bt.body.horizons.length === 4, '透出四个视界定义');
   eq(bt.body.whyLabels.upgrade, '档位升级信号', '透出信号类型的标签');
+  eq(bt.body.whyLabels.dragon, '真龙信号', '透出「只买真龙」这一档的标签');
+  eq(bt.body.reasonLabels.tp, '止盈', '透出出场原因的标签，前端不用自己写一份映射');
+  ok(bt.body.summary.tp && bt.body.summary.tp.threshold > 0, '汇总带上止盈阈值，前端与文档引用同一个值');
+  ok('rate' in bt.body.summary.tp && 'holdMedian' in bt.body.summary.tp,
+    '透出止盈触发率与「持满视界那批」的中位收益，两个数要一起看');
+
+  // 不传 why 时必须落到策略口径（只买真龙），否则页面默认视图会和策略脱节
+  const btDefault = await api('/api/backtest?horizon=1h');
+  eq(btDefault.body.summary.why, 'dragon', '不传 why 时默认口径是「只买真龙」');
+  ok(btDefault.body.samples.every((x) => x.why === 'dragon'), '默认视图的明细只含真龙信号');
 
   const btUp = await api('/api/backtest?horizon=24h&why=upgrade');
   eq(btUp.status, 200, '按信号类型过滤也返回 200');

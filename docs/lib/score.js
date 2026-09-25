@@ -7,6 +7,8 @@
  *  2. 每个因子都有可解释的中文说明，前端直接展示。
  *  3. 缺数据 ≠ 中性：缺什么就扣置信度，不假装它是 0。
  *  4. 无 look-ahead：只使用当前快照与更早的快照。
+ *  5. 不读挂钟：所有时间相关的判定都走 scoreToken 的 now 参数（默认 Date.now()）。
+ *     因子内部自己调 Date.now() 会让分数不可复现，也会让夹具里的「新池」随时间悄悄变老。
  *
  * 同构模块：Node 端 require('./lib/score')，浏览器端 <script> 加载后使用 window.DragonScore。
  */
@@ -56,9 +58,9 @@ function windowAvailability(cur, now) {
 }
 
 // ---------------------------------------------------------------- 基础因子
-function fVolBurst(cur, prev) {
+function fVolBurst(cur, prev, now = Date.now()) {
   const v = cur.volume || {};
-  const ageSec = cur.pairCreatedAt ? Math.max(300, (Date.now() - cur.pairCreatedAt) / 1000) : 86400;
+  const ageSec = cur.pairCreatedAt ? Math.max(300, (now - cur.pairCreatedAt) / 1000) : 86400;
   const effAge = Math.min(86400, ageSec);
   // 当前速率：有历史快照就用区间真实增量（能修掉新池 h24==h1==m5 的退化统计），否则用 5 分钟均值。
   // 快照字段名以服务端为准（volH24），并兼容旧字段；增量异常（为负/超过总量，通常是数据源重置）时退回 5 分钟均值。
@@ -268,7 +270,7 @@ function scoreToken(cur, prev, now = Date.now()) {
   cur = cur || {};
   const { avail, ageMin, degenerate } = windowAvailability(cur, now);
   const f = {
-    volBurst: fVolBurst(cur, prev),
+    volBurst: fVolBurst(cur, prev, now),
     buyPressure: fBuyPressure(cur, avail),
     accel: fAccel(cur, avail, prev),
     resonance: fResonance(cur, avail),

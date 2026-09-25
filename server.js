@@ -511,7 +511,8 @@ async function handleApi(req, res, url) {
   if (p === '/api/backtest') {
     const opts = {
       horizon: url.searchParams.get('horizon') || '1h',
-      why: url.searchParams.get('why') || 'all',
+      // 默认口径是策略本身：只买真龙。其余两条腿（升级 / 首现）保留作对照。
+      why: url.searchParams.get('why') || 'dragon',
       chain: url.searchParams.get('chain') || '',
     };
     return send(res, 200, {
@@ -522,6 +523,7 @@ async function handleApi(req, res, url) {
       series: Ledger.indexSeries(state.ledger, 160),
       horizons: Ledger.HORIZONS,
       whyLabels: Ledger.WHY_LABEL,
+      reasonLabels: Ledger.REASON_LABEL,
       gradeLabels: Ledger.GRADE_LABEL,
     });
   }

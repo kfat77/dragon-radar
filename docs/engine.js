@@ -345,10 +345,11 @@
       return {
         available: false,
         error: '未加载 lib/ledger.js，回测不可用',
-        summary: null, samples: [], series: [], horizons: [], whyLabels: {}, gradeLabels: {},
+        summary: null, samples: [], series: [], horizons: [], whyLabels: {}, reasonLabels: {}, gradeLabels: {},
       };
     }
-    var o = { horizon: opts.horizon || '1h', why: opts.why || 'all', chain: opts.chain || '' };
+    // 默认口径是策略本身：只买真龙。其余两条腿（升级 / 首现）保留作对照。
+    var o = { horizon: opts.horizon || '1h', why: opts.why || 'dragon', chain: opts.chain || '' };
     return {
       available: true,
       summary: L.summarize(ledger, o),
@@ -358,6 +359,7 @@
       series: L.indexSeries(ledger, 160),
       horizons: L.HORIZONS,
       whyLabels: L.WHY_LABEL,
+      reasonLabels: L.REASON_LABEL,
       gradeLabels: L.GRADE_LABEL,
     };
   }
