@@ -341,12 +341,12 @@ RugCheck 全量报告补齐持币地址数、前 20 持有人与 insider 标记�
 | 指标 | 它回答什么 | 缺了它会怎样 |
 | --- | --- | --- |
 | 胜率 | 已结算样本里正收益的占比 | 那段时间全市场普涨时，闭着眼睛买也是高胜率 |
-| 榜单指数基准 | 同一时段、同一榜单里所有连续在榜标的的等权中位收益，连乘成参考线 | 无法区分「雷达选得准」和「那阵子全市场在涨」 |
+| 榜单指数基准 | 同一时段、同一榜单里所有连续在榜标的的等权收益（每轮再平衡）连乘成参考线 | 无法区分「雷达选得准」和「那阵子全市场在涨」 |
 | 样本流失率 | 到点却补不到价格的信号数 | 掉出榜单的标的很可能就是归零那批，悄悄抹掉会让胜率系统性虚高 |
 
 **超额收益 = 信号收益 − 同期榜单指数收益。** 这才回答「雷达选的比雷达池子的平均强吗」。
 
-### 3c.3 四条不退让的口径
+### 3c.3 五条不退让的口径
 
 - **价格必须为正才结算。** `priceUsd <= 0` 一律拒绝结算，开仓时也不开。链上行情里的 0 与负数
   代表池子没了或取数出错，把它当成 0% 收益，等于把最危险的那一类结局记成「不亏不赚」。
@@ -356,18 +356,40 @@ RugCheck 全量报告补齐持币地址数、前 20 持有人与 insider 标记�
   不渲染胜率、中位收益与超额。
 - **流失单独统计。** 到期后 48 小时仍补不到价格记流失，单独计数、单独显示，不并入胜率分母，
   也不当成中性收益。
+- **观测序列按「窗口编号」累积，不按「距上一个点的间隔」。** 开仓后每 5 分钟留一个观测价，
+  同一个 5 分钟窗口内只保留最新价。这一条看起来是实现细节，实际上是两条功能的命门：
+  最大不利偏移与「掉榜后用本地观测补价」都依赖这条序列。如果按间隔判重，连扫时每一轮都落在
+  5 分钟以内，每个点都会被就地覆盖，序列永远只有 1 个点，而表面上完全看不出来。
 
 此外还会记录**最大不利偏移**（从开仓到结算之间出现过的最差浮亏）并给出分位分布。
 只有收益数字没有回撤数字，胜率会显得比实际舒服得多 —— 赚 50% 的前提是先扛住 −60%。
 
 ### 3c.4 榜单指数怎么算
 
-每一轮取「上一轮与这一轮都在榜」的标的，算各自的轮间收益，取中位数，再连乘成净值曲线。
-单轮涨跌超过 10 倍的点会被剔除（数据源把价格单位换了会一次把整条线拉飞）。
+每一轮取「上一轮与这一轮都在榜」的标的，算各自的轮间收益，做 10% 截尾（首尾各去掉 10%，
+标的少于 20 个时不截尾），取**等权平均**，再连乘成净值曲线。单轮涨跌超过 10 倍的点会被剔除
+（数据源把价格单位换了会一次把整条线拉飞）。指数存 8 位小数：实测轮间波动常在 0.001% 量级，
+按 4 位小数存会被整片抹成 0，指数线永远停在 1.0，基准就白算了。
+
+**基准为什么是等权平均而不是中位数。** 第一版取的是每轮中位收益，跑起来发现净值永远贴在
+1.0000。原因是这类新池子里有大量「一分钟内价格完全没动」的标的，只要过半标的没动，
+当轮中位数就**精确等于 0**，连乘下来整条线是死的。基准恒为 0 之后，「跑赢基准」就退化成
+「收益为正」，和胜率成了同一个数 —— 基准设了等于没设。改成等权平均后两个数才真正分开。
+中位口径仍然记录，只作参照，它的含义是「中位标的其实没怎么动」，不是「大盘没涨」。
+
+截尾的代价要说清楚：它丢掉尾部，如果行情确实只由少数标的拉起，基准会偏低、超额会偏高。
+所以汇总里同时给出未截尾的均值供对照。反过来，不截尾的话一个「价格单位换了、又恰好没被
+10 倍阈值拦住」的脏点就能把整条基准线抬起来。
 
 已知口径限制，不藏：新进榜的标的当轮没有上一轮价格，不计入；掉出榜单的标的在最后一轮之后
 不再计入。所以它偏向「活得久」的那批，与信号账本面对的是同一类幸存者问题 ——
 但两者同向受影响，做比较仍然成立。
+
+另有一条容易忽略的性质：**「每轮收益的连乘」不等于「每个标的在整个窗口上的收益」**。
+前者是在「典型的一分钟」上反复取值，后者才是「典型的一个标的」。实测榜单每轮的收益中位数
+经常正好是 0（大多数 meme 币一分钟内价格没动，过半数为 0 时中位数就是 0），
+所以中位口径的指数在平静行情里就是一条水平线 —— 这正是它不能当基准的原因。
+等权口径衡量的是「每分钟里池子整体的典型涨跌」，不是「典型标的的累计涨跌幅」。
 
 ### 3c.5 怎么用
 
@@ -594,7 +616,7 @@ dragon-radar/
 | GET | `/api/token/:chainId/:address` | 单币详情；榜单里没有则现拉一次行情并单独打分 |
 | GET | `/api/checkup/:chainId/:address` | 四维体检。参数 `capital`（用于仓位倒推，默认 10000）、`force=1` 绕过缓存。结果缓存 6 小时（深检 24 小时） |
 | GET | `/api/price?address=` | 单币实时报价，缓存 30 秒 |
-| GET | `/api/backtest` | 抓龙胜率。参数 `horizon`（`15m` / `1h` / `6h` / `24h`，默认 `1h`）、`why`（`all` / `first` / `upgrade`）、`chain`、`limit`。返回汇总、样本明细、指数曲线与口径常量 |
+| GET | `/api/backtest` | 抓龙胜率。参数 `horizon`（`15m` / `1h` / `6h` / `24h`，默认 `1h`）、`why`（`all` / `first` / `upgrade`）、`chain`、`limit`。返回汇总、样本明细、指数曲线与口径常量。基准在 `summary.benchmark`：`marketReturn` 是等权榜单指数（基准本体），`medianReturn` 是中位口径参照 |
 | POST | `/api/backtest/reset` | 清空信号账本重新积累（不影响榜单与自选） |
 | GET | `/api/watchlist` | 读取自选清单 |
 | POST | `/api/watchlist` | 加入自选，JSON 体 `{ tokenAddress, chainId, symbol }` |
@@ -620,12 +642,17 @@ npm test
   最小值、止损距离随阶段变化、阶段系数与致命项归零；缺数据时数值字段必须显式置空
   （不能留成 undefined，那会被渲染成「前十大 undefined%」这种像结论的东西）；
   以及任意夹具组合下不产生 NaN 或越界值。
-- `test/ledger.test.js`：28 项通过。覆盖信号账本与前瞻回测：首现信号去重、档位升级信号只在
+- `test/ledger.test.js`：34 项通过。覆盖信号账本与前瞻回测：首现信号去重、档位升级信号只在
   龙头候选及以上开仓、价格 ≤ 0 拒绝开仓也拒绝结算、四个视界各自独立结算、掉榜后用本地观测
   序列回补、超过 48 小时记流失且不混进胜率分母、榜单指数只在单轮样本足够时记点并剔除
-  单轮 10 倍以上的脏点、区间内无采样点时指数收益必须为 null、样本不足 30 笔时拒绝给结论、
+  单轮 10 倍以上的脏点、指数必须保留亚 0.01% 的轮间收益（否则整条线永远停在 1.0）、
+  等权口径与中位口径必须同时记录、等权基准不得与胜率同义（中位为 0 而等权为正时
+  「跑赢基准」必须真的低于胜率）、标的够多时单轮 10% 截尾必须挡得住脏点、
+  观测序列必须按 5 分钟窗口累积（按间隔判重会让序列永远只有 1 个点，最大浮亏与掉榜回补
+  一起失效）、旧版本账本必须重置（不能一条指数上混两种口径）、
+  区间内无采样点时指数收益必须为 null、样本不足 30 笔时拒绝给结论、
   超额收益必须等于信号收益减同期指数收益、以及任意夹具组合下统计结果不出现 NaN 或 undefined。
-- `test/engine.test.js`：108 项通过。在进程内伪造 `self` / `localStorage` / `fetch`，
+- `test/engine.test.js`：111 项通过。在进程内伪造 `self` / `localStorage` / `fetch`，
   加载真实的 `lib/` 与 `src/`，跑完整链路：建候选池、取行情、打分、落盘、
   第二轮用真实区间增量重算量能、榜单筛选、自选豁免质量地板、适配层全部端点，
   以及账本在浏览器端的前瞻记账（开仓价必须是首次上榜那一刻的真实价格，不能是后来的价格）、
@@ -942,7 +969,7 @@ node tools/ledger-report.js --horizon=15m
 
 不是。这个数字至少有三个必须同时看的口径：
 
-1. **同期榜单指数基准。** 如果那段时间整个榜单的中位收益比信号还高，说明赚钱的是行情
+1. **同期榜单指数基准。** 如果那段时间整个榜单的等权收益比信号还高，说明赚钱的是行情
    不是模型。所以页面会同时给出「中位超额 ＝ 信号收益 − 同期指数收益」。
 2. **样本流失率。** 掉出榜单的标的很可能就是归零那批，它们到了结算时间往往补不到价格。
    把这一批从分母里悄悄抹掉，胜率会系统性虚高。页面单独列出流失数，不混进胜率。
@@ -950,6 +977,25 @@ node tools/ledger-report.js --horizon=15m
 
 还有两层偏差要知道：账本只覆盖本工具的候选池（不是全市场），结算用的是公开报价
 （不含滑点与手续费）。所以它衡量的是**信号的方向性**，不是可实现收益，也不预示未来。
+
+**Q18：为什么「跑赢基准」和「胜率」不是同一个数？**
+
+如果写成同一个数，那这个基准就是白设的。第一版基准取的是每轮**中位**收益，线上跑起来
+净值永远停在 1.0000 —— 这类新池子里有大量「一分钟内价格完全没动」的标的，只要过半没动，
+当轮中位数就精确等于 0，连乘下来整条线是死的。基准恒为 0 之后，「收益为正」就等于
+「跑赢基准」，两个数自然就重合了。
+
+现在基准改成**等权**（每轮再平衡、首尾各 10% 截尾）。这两个口径实测确实会分开：
+
+```text
+榜单指数：2 个采样点，等权净值 1.0121（中位口径参照 1.0000）
+```
+
+同一段行情、同一批标的，等权口径动了 1.21%，中位口径一动不动。这也是为什么页面上
+照旧保留中位口径、但只把它当参照：它的含义是「中位标的其实没动」，不是「大盘没涨」。
+
+顺带一句口径变更的代价：等权基准做 10% 截尾，是为了不被单价错乱这类脏点抬起来。
+截尾会丢尾部，所以汇总里同时给出未截尾的均值，两边对着看。
 
 ## 十三、注意事项
 
@@ -973,6 +1019,11 @@ node tools/ledger-report.js --horizon=15m
   真实成交还要扣滑点与手续费，所以它不等于、也不预示可实现收益。
 - 账本统计只覆盖本工具的候选池，不是全市场。它回答「在这个池子里信号值不值」，
   不能外推到整个市场。榜单指数本身偏向活得久的标的，这一层偏差已知且不藏。
+- 榜单指数用每轮 10% 截尾的等权收益，这是拿「抗脏点」换来的：截尾会丢掉尾部，
+  如果一段行情确实只由少数标的拉起，基准会偏低、超额会偏高。汇总里同时给出未截尾的均值，
+  两边对着看，别只看好看的那个。
+- 版本号是硬门槛：榜单指数口径变更过（每轮中位 → 每轮等权截尾），旧账本在加载时会被重置，
+  而不是接着累。同一条指数上混着两种口径，比丢掉一段数据更糟。
 - 纯静态部署（GitHub Pages）只在页面打开时采集，关掉的时段没有观测点；
   到期补不到价格的信号会计入流失。要连续采集请用 Node 形态常驻运行。
 - 页面按 A 股习惯着色：涨为红、跌为绿。这不是笔误。
@@ -1341,13 +1392,13 @@ and the page gives you no way to take one without the others.
 | Metric | What it answers | What goes wrong without it |
 | --- | --- | --- |
 | Win rate | Share of settled samples with positive return | In a broad rally, buying blind also gives a high win rate |
-| Board index benchmark | Equal-weight median round-over-round return of every continuously listed token, chained into a reference line | You cannot separate "the radar picks well" from "the whole market was pumping" |
+| Board index benchmark | Equal-weight round-over-round return of every continuously listed token (rebalanced each round), chained into a reference line | You cannot separate "the radar picks well" from "the whole market was pumping" |
 | Attrition rate | Signals that came due but never got a price | Tokens that fell off the board are probably the ones that died; dropping them inflates the win rate |
 
 **Excess return = signal return - board index return over the same window.** That is what answers
 "does the radar beat the average of its own universe".
 
-### 3c.3 Four non-negotiable rules
+### 3c.3 Five non-negotiable rules
 
 - **A price must be positive to settle.** `priceUsd <= 0` is refused at settlement and no signal is
   opened at such a price either. On chain data, 0 and negative values mean the pool is gone or the
@@ -1360,6 +1411,13 @@ and the page gives you no way to take one without the others.
 - **Attrition is counted separately.** A signal that still has no price 48 hours after coming due
   is recorded as lost, counted and displayed separately. It is not merged into the win-rate
   denominator and not treated as a neutral zero.
+- **The observation series accumulates by bucket id, not by elapsed time since the last point.**
+  After entry, one observation price is kept per 5-minute window, and within a window only the
+  newest price survives. This looks like an implementation detail but it is the load-bearing part
+  of two features: maximum adverse excursion and "backfill from local observations after a token
+  leaves the board". Deduplicating by elapsed time instead means that during continuous scanning
+  every round falls inside a 5-minute window, every point is overwritten in place, and the series
+  never grows beyond one entry -- with nothing visible on the surface to show it.
 
 The ledger also records the **maximum adverse excursion** (worst unrealised drawdown between entry
 and settlement) and reports the quantile distribution. A return without a drawdown makes a high win
@@ -1368,14 +1426,39 @@ rate look far more comfortable than the trade actually was: earning 50% requires
 ### 3c.4 How the board index is computed
 
 Each round takes every token present in both the previous and the current round, computes its
-round-over-round return, takes the median, and chains those into a net-value curve. Points beyond
-a 10x single-round move are dropped, since a price-unit change at the data source would otherwise
-whip the whole line.
+round-over-round return, applies a 10% trim (10% off each tail; no trim below 20 tokens), takes the
+**equal-weighted mean**, and chains those into a net-value curve. Points beyond a 10x single-round
+move are dropped, since a price-unit change at the data source would otherwise whip the whole line.
+Index values are stored with 8 decimals: measured round-over-round moves are often around 0.001%,
+and 4 decimals would flatten them all to 0, pinning the index at 1.0 and making the benchmark useless.
+
+**Why the benchmark is an equal-weighted mean and not a median.** The first version used the median
+round return, and the resulting net value sat pinned at 1.0000 forever. The cause: this pool contains
+a large mass of tokens whose price does not move at all within a minute, so once more than half the
+board is unchanged the round median is **exactly 0**, the chained product is flat, and "beat the
+benchmark" collapses into "return is positive" -- the same number as the win rate. A benchmark pinned
+at 0 is a benchmark that does not exist. Switching to the equal-weighted mean separates the two
+numbers again. The median variant is still recorded, but only as a reference point: its meaning is
+"the median token did not move", not "the market did not rise".
+
+The cost of trimming has to be stated: it discards the tails, so if a rally really is driven by a
+handful of tokens the benchmark will read low and excess will read high. The summary therefore also
+reports the untrimmed mean for comparison. Leaving it untrimmed has the opposite failure mode: a
+single dirty point -- a price-unit change that happens to slip under the 10x threshold -- would lift
+the entire benchmark line.
 
 Known limitation, stated openly: tokens entering the board have no previous price and do not count
 for that round, and tokens leaving the board stop counting after their last round. The index is
 therefore biased toward long-lived tokens, which is the same survivorship problem the signal ledger
 faces. Both are affected in the same direction, so the comparison still holds.
+
+One further property is easy to miss: **the chained product of per-round returns is not the return of
+a typical token over the whole window.** The former samples "a typical minute", the latter "a typical
+token". Measured on live data, the board's median round return is frequently exactly 0 (most meme
+tokens do not move within a minute, and once more than half are unchanged the median is 0), so the
+median variant of the index is a horizontal line in calm markets -- which is precisely why it cannot
+serve as the benchmark. The equal-weighted variant measures "the typical move of the pool per minute",
+not "the cumulative move of a typical token".
 
 ### 3c.5 How to use it
 
@@ -1621,7 +1704,7 @@ the official public card URL.
 | GET | `/api/token/:chainId/:address` | Single token detail; fetches and scores fresh if not on the board |
 | GET | `/api/checkup/:chainId/:address` | Four-dimension checkup. Query: `capital` (used to derive position size, default 10000), `force=1` to bypass the cache. Results cache for 6 hours, 24 hours for deep checks |
 | GET | `/api/price?address=` | Live quote for one token, cached 30 seconds |
-| GET | `/api/backtest` | Hit rate. Query: `horizon` (`15m` / `1h` / `6h` / `24h`, default `1h`), `why` (`all` / `first` / `upgrade`), `chain`, `limit`. Returns the summary, sample detail, index curve and the calibration constants |
+| GET | `/api/backtest` | Hit rate. Query: `horizon` (`15m` / `1h` / `6h` / `24h`, default `1h`), `why` (`all` / `first` / `upgrade`), `chain`, `limit`. Returns the summary, sample detail, index curve and the calibration constants. The benchmark lives in `summary.benchmark`: `marketReturn` is the equal-weighted board index (the benchmark proper), `medianReturn` is the median variant kept as a reference |
 | POST | `/api/backtest/reset` | Clear the signal ledger and start accumulating again (does not touch the board or the watchlist) |
 | GET | `/api/watchlist` | Read the watchlist |
 | POST | `/api/watchlist` | Add to watchlist, JSON body `{ tokenAddress, chainId, symbol }` |
@@ -1652,16 +1735,24 @@ Results measured on the development machine:
   and fatal findings forcing size to zero; numeric fields being explicitly null rather than
   undefined when data is missing (an undefined would render as "top-10 undefined%", which reads
   like a conclusion); plus no NaN or out-of-range output across arbitrary fixture combinations.
-- `test/ledger.test.js`: 28 assertions pass. Covers the signal ledger and forward test:
+- `test/ledger.test.js`: 34 assertions pass. Covers the signal ledger and forward test:
   first-sighting dedup, upgrade signals only opening at Candidate or better, a price <= 0
   refusing both entry and settlement, the four horizons settling independently, backfilling
   from the local observation series after a token leaves the board, the 48-hour give-up being
   counted separately and never merged into the win-rate denominator, the board index only
   recording a point when a round has enough tokens and dropping dirty points beyond a 10x
-  single-round move, index return being `null` when no sample falls in the window, refusing to
-  state a win rate below 30 samples, excess return equalling signal return minus index return,
-  and no NaN or undefined in any statistic across arbitrary fixture combinations.
-- `test/engine.test.js`: 108 assertions pass. Fakes `self`, `localStorage` and `fetch` in
+  single-round move, the index retaining sub-0.01% round returns (otherwise the line would sit at
+  1.0 forever), both the equal-weighted and the median variant being recorded, the equal-weighted
+  benchmark never collapsing into the win rate (when the median is 0 and the equal-weighted mean is
+  positive, "beat the benchmark" must genuinely fall below the win rate), the 10% per-round trim
+  holding up against dirty points once there are enough tokens, the observation series
+  accumulating by bucket (deduplicating by elapsed time would leave it at a single point and
+  silently break both the drawdown and the backfill), a ledger written by an older version being
+  reset rather than mixing two index definitions on one line, index return being `null` when no
+  sample falls in the window, refusing to state a win rate below 30 samples, excess return
+  equalling signal return minus index return, and no NaN or undefined in any statistic across
+  arbitrary fixture combinations.
+- `test/engine.test.js`: 111 assertions pass. Fakes `self`, `localStorage` and `fetch` in
   process, loads the real `lib/` and `src/`, and runs the whole pipeline: universe building,
   quote fetching, scoring, persistence, a second round recomputing volume from a real
   interval delta, board filtering, watchlist exemption from the quality floor, and every
@@ -2017,9 +2108,9 @@ past year" curve here. See section 3c.
 
 No. That number has at least three qualifications that must be read with it:
 
-1. **The board index benchmark.** If the median return of the whole board over the same window is
-   higher than the signal's, the market made the money, not the model. So the page also reports
-   median excess = signal return - index return over the same window.
+1. **The board index benchmark.** If the equal-weighted return of the whole board over the same
+   window is higher than the signal's, the market made the money, not the model. So the page also
+   reports median excess = signal return - index return over the same window.
 2. **The attrition rate.** Tokens that fell off the board are probably the ones that went to zero,
    and they often cannot be priced when settlement is due. Quietly dropping them out of the
    denominator inflates the win rate. The page lists attrition separately and never merges it in.
@@ -2029,6 +2120,30 @@ No. That number has at least three qualifications that must be read with it:
 Two further biases to know: the ledger covers this tool's candidate pool rather than the whole
 market, and settlement uses public quotes without slippage or fees. So it measures the **direction**
 of the signal, not a realisable return, and does not predict the future.
+
+**Q18: Why are "beat the benchmark" and the win rate not the same number?**
+
+If they were the same number, the benchmark would not be doing anything. The first version used the
+**median** round return, and on live data the net value sat pinned at 1.0000: this pool contains a
+large mass of tokens whose price does not move at all within a minute, so once more than half the
+board is unchanged the round median is exactly 0 and the chained line is dead. With the benchmark
+pinned at 0, "return is positive" and "beat the benchmark" coincide -- hence the two identical numbers.
+
+The benchmark is now **equal-weighted** (rebalanced each round, 10% trimmed off each tail). Measured
+live, the two definitions genuinely separate:
+
+```text
+榜单指数：2 个采样点，等权净值 1.0121（中位口径参照 1.0000）
+Board index: 2 sample points, equal-weighted net value 1.0121 (median variant reference 1.0000)
+```
+
+Same window, same set of tokens: the equal-weighted line moved 1.21% while the median variant did not
+move at all. That is why the median variant is still recorded but kept strictly as a reference -- its
+meaning is "the median token did not move", not "the market did not rise".
+
+One cost of the change, stated plainly: the equal-weighted benchmark trims 10% so that dirty points
+such as price-unit mix-ups cannot lift it. Trimming discards the tails, so the summary also reports
+the untrimmed mean for comparison.
 
 ## 13. Caveats
 
@@ -2063,6 +2178,13 @@ of the signal, not a realisable return, and does not predict the future.
 - Ledger statistics cover this tool's candidate pool only, not the whole market. They say whether
   the signal is worth anything inside that pool and do not extrapolate to the market. The board
   index itself is biased toward long-lived tokens; that bias is known and stated rather than hidden.
+- The board index uses an equal-weighted return with a 10% trim per round. That is the price paid
+  for robustness against dirty points: trimming discards the tails, so if a stretch of the market
+  really is driven by a handful of tokens, the benchmark reads low and excess reads high. The
+  summary also reports the untrimmed mean; read both rather than only the flattering one.
+- The version number is a hard gate. The index definition changed (median per round to trimmed
+  equal-weight per round), so a ledger written by an older version is reset on load rather than
+  continued. Mixing two definitions on one index line is worse than losing a stretch of data.
 - Pure static deployment on GitHub Pages only collects while the page is open, so periods with the
   page closed have no observations and signals that cannot be priced when due count as attrition.
   Run the Node mode as a service for continuous collection.

@@ -233,7 +233,7 @@ ok('指数单轮标的不足 3 个时不记点：样本太少的「大盘」没�
   assert.strictEqual(led.index.length, 0);
 });
 
-ok('指数取轮间收益的中位数，并连乘成净值', () => {
+ok('指数净值两个口径同时记录：等权（基准本体）+ 中位（参照）', () => {
   const led = L.create();
   const mk = (p) => [
     tok({ key: 'solana:A', priceUsd: p[0] }), tok({ key: 'solana:B', priceUsd: p[1] }),
@@ -242,10 +242,86 @@ ok('指数取轮间收益的中位数，并连乘成净值', () => {
   L.observe(led, mk([1, 1, 1, 1]), T0);
   L.observe(led, mk([2, 1, 0.5, 3]), T0 + 60e3);
   assert.strictEqual(led.index.length, 1, '应有 1 个指数点');
-  // 收益为 +100% / 0% / -50% / +200%，中位数 = (0 + 1) / 2 = 0.5
-  assert.strictEqual(led.index[0].med, 0.5, '实际 ' + led.index[0].med);
-  assert.strictEqual(led.index[0].level, 1.5);
-  assert.strictEqual(L.indexReturn(led, T0, T0 + 60e3), 0.5);
+  // 收益为 +100% / 0% / -50% / +200%；中位 = (0 + 1) / 2 = 0.5
+  assert.strictEqual(led.index[0].med, 0.5, '中位口径实际 ' + led.index[0].med);
+  assert.strictEqual(led.index[0].level, 1.5, '中位口径净值实际 ' + led.index[0].level);
+  // 只有 4 个标的，低于截尾门槛，等权口径就是算术平均：(1 + 0 - 0.5 + 2) / 4 = 0.625
+  assert.strictEqual(led.index[0].mean, 0.625, '等权口径实际 ' + led.index[0].mean);
+  assert.strictEqual(led.index[0].mlevel, 1.625, '等权口径净值实际 ' + led.index[0].mlevel);
+  // 默认口径必须是等权 —— 中位口径在这个市场里恒为 0，拿它当基准等于没有基准
+  assert.strictEqual(L.indexReturn(led, T0, T0 + 60e3), 0.625);
+  assert.strictEqual(L.indexReturn(led, T0, T0 + 60e3, '', 'med'), 0.5);
+});
+
+ok('等权基准不与胜率同义：中位为 0 但等权为正时，「跑赢基准」要真的低于胜率', () => {
+  const led = L.create();
+  // 榜单上的四个标的用「观察」档，避免它们也开出升级信号，只留下被检验的那一笔
+  const w = { grade: 'watch', score: 50 };
+  const four = (p) => [
+    tok({ key: 'solana:A', priceUsd: p, ...w }), tok({ key: 'solana:B', priceUsd: p, ...w }),
+    tok({ key: 'solana:C', priceUsd: p, ...w }), tok({ key: 'solana:D', priceUsd: p, ...w }),
+  ];
+  const fourUp = (p, u) => [
+    tok({ key: 'solana:A', priceUsd: p, ...w }), tok({ key: 'solana:B', priceUsd: p, ...w }),
+    tok({ key: 'solana:C', priceUsd: p, ...w }), tok({ key: 'solana:D', priceUsd: p * u, ...w }),
+  ];
+  L.observe(led, four(1), T0);
+  L.observe(led, four(1), T0 + 30 * 60e3);          // 全不动：中位 0，等权 0
+  L.observe(led, fourUp(1, 1.5), T0 + 60 * 60e3);   // 只有一个动：中位仍然 0，等权 = 0.5/4 = 0.125
+  assert.strictEqual(led.index[1].med, 0, '中位口径应精确为 0，实际 ' + led.index[1].med);
+  assert.strictEqual(led.index[1].mean, 0.125, '等权口径实际 ' + led.index[1].mean);
+
+  L.observe(led, board(tok({ key: 'solana:HIT', symbol: 'HIT', priceUsd: 1 })), T0);
+  // 标的涨 5%：收益为正（算胜），但没跑赢等权基准
+  L.settle(led, { 'solana:HIT': 1.05 }, T0 + 60 * 60e3 + 1);
+  const st = L.summarize(led, { horizon: '1h', why: 'upgrade' });
+  assert.strictEqual(st.n, 1, '升级信号应只有 1 笔，实际 ' + st.n);
+  assert.strictEqual(st.winRate, 1, '正收益占比应为 1');
+  assert.ok(st.benchmark.marketReturn > 0.1, '等权基准必须显著为正，实际 ' + st.benchmark.marketReturn);
+  assert.notStrictEqual(st.benchmark.beatRate, st.winRate,
+    '跑赢基准的比例不能等于胜率 —— 相等就说明基准退化成了 0');
+  assert.strictEqual(st.benchmark.beatRate, 0, '实际 ' + st.benchmark.beatRate);
+  assert.ok(st.benchmark.medianExcess < 0, '超额必须为负，实际 ' + st.benchmark.medianExcess);
+  // 中位口径依旧贴 0，它只是参照，已经不再承担基准职责
+  assert.strictEqual(st.benchmark.medianReturn, 0, '中位口径参照值实际 ' + st.benchmark.medianReturn);
+});
+
+ok('标的够多时单轮做 10% 截尾：个别脏点抬不动整条基准线', () => {
+  const led = L.create();
+  const n = 22;
+  const flat = [];
+  for (let i = 0; i < n; i++) flat.push(tok({ key: 'solana:F' + i, symbol: 'F' + i, priceUsd: 1 }));
+  L.observe(led, flat, T0);
+  // 20 个不动 + 1 个 +1000%（刚好卡在脏点阈值内）+ 1 个 -5%
+  const noisy = flat.map((t, i) => tok({ key: t.key, symbol: t.symbol, priceUsd: i === 0 ? 11 : (i === 1 ? 0.95 : 1) }));
+  L.observe(led, noisy, T0 + 60e3);
+  const e = led.index[0];
+  assert.ok(e, '应记下指数点');
+  // 未截尾的算术平均会被 +1000% 拉起来，截尾后首尾各去掉 2 个，只剩不动的标的
+  assert.strictEqual(e.mean, 0, '截尾后应为 0，实际 ' + e.mean);
+  const raw = (10 + -0.05) / 22;
+  assert.ok(raw > 0.4, '作为对照：未截尾均值会被脏点拉到 ' + raw);
+});
+
+ok('等权口径也保留亚 0.01% 的轮间收益，且净值与区间收益回算一致', () => {
+  const led = L.create();
+  const three = (p) => board(
+    tok({ key: 'solana:A', priceUsd: p }),
+    tok({ key: 'solana:B', priceUsd: p }),
+    tok({ key: 'solana:C', priceUsd: p })
+  );
+  L.observe(led, three(1), T0);
+  // 每轮只涨 0.001%：线上真实榜单的轮间波动就是这个量级
+  L.observe(led, three(1 + 1e-5), T0 + 60e3);
+  assert.strictEqual(led.index.length, 1, '应记下 1 个指数点');
+  assert.strictEqual(led.index[0].med, 1e-5, '轮间中位收益必须保留 1e-5，实际 ' + led.index[0].med);
+  assert.strictEqual(led.index[0].mean, 1e-5, '轮间等权收益必须保留 1e-5，实际 ' + led.index[0].mean);
+  assert.ok(led.index[0].mlevel > 1, '等权净值必须真的动了，而不是停在 1');
+  const r = L.indexReturn(led, T0, T0 + 120e3);
+  assert.ok(r != null && r > 0, '区间收益必须为正，实际 ' + r);
+  // 净值用未舍入值累乘、区间收益用已存值回算，两个精度必须对得上
+  assert.ok(Math.abs(led.index[0].mlevel - (1 + r)) < 1e-12,
+    '已存净值与区间收益回算必须一致：' + led.index[0].mlevel + ' vs ' + (1 + r));
 });
 
 ok('指数剔掉单轮 10 倍以上的脏点：价格单位错乱不能把整条线拉飞', () => {
@@ -257,6 +333,7 @@ ok('指数剔掉单轮 10 倍以上的脏点：价格单位错乱不能把整条
   L.observe(led, mk([1, 1, 1, 1]), T0);
   L.observe(led, mk([1e6, 1, 1, 1]), T0 + 60e3);
   assert.strictEqual(led.index[0].med, 0, '脏点应剔除后中位数为 0，实际 ' + led.index[0].med);
+  assert.strictEqual(led.index[0].mean, 0, '脏点应剔除后等权均值也为 0，实际 ' + led.index[0].mean);
   assert.strictEqual(led.index[0].n, 3, '有效样本应为 3，实际 ' + led.index[0].n);
 });
 
@@ -415,6 +492,47 @@ ok('reset 后账本归零', () => {
   assert.strictEqual(Object.keys(led.signals).length, 0);
   assert.strictEqual(led.index.length, 0);
   assert.strictEqual(led.indexLevel, 1);
+  assert.strictEqual(led.marketLevel, 1);
+});
+
+ok('旧版本账本直接重置：指数口径换过一次，一条线上不能混两种口径', () => {
+  const led = L.create();
+  L.observe(led, board(tok()), T0);
+  L.observe(led, board(tok({ priceUsd: 2 })), T0 + 30 * 60e3);
+  led.v = 1;
+  const back = L.normalize(led);
+  assert.strictEqual(back.index.length, 0, '旧账本必须重置，不能带着旧口径继续累');
+  assert.strictEqual(Object.keys(back.signals).length, 0);
+  assert.strictEqual(back.v, L.VERSION);
+});
+
+ok('观测序列按 5 分钟窗口累积：连续运行时不能被就地覆盖成 1 个点', () => {
+  const led = L.create();
+  const mk = (p) => board(tok({ key: 'solana:OBS', symbol: 'OBS', priceUsd: p }));
+  // 每 60 秒一轮，连跑 30 分钟
+  for (let i = 0; i <= 30; i++) L.observe(led, mk(1 + i * 0.01), T0 + i * 60e3);
+  const series = led.__obs['first|solana:OBS'];
+  assert.ok(series && series.length >= 5,
+    '30 分钟至少应留下 5 个观测点，实际 ' + (series ? series.length : 0));
+  // 同一个 5 分钟窗口内只保留最新价，不能一轮一个点把序列撑爆
+  assert.ok(series.length <= 8, '同一窗口内不应每个点都留下，实际 ' + series.length);
+  for (let i = 1; i < series.length; i++) {
+    assert.ok(series[i][0] > series[i - 1][0], '观测点时间必须严格递增');
+  }
+});
+
+ok('观测序列撑得起来：最大不利偏移才有多点可算', () => {
+  const led = L.create();
+  const mk = (p) => board(tok({ key: 'solana:MAE', symbol: 'MAE', priceUsd: p }));
+  L.observe(led, mk(1), T0);
+  // 中途一路跌到 0.6，再涨回来
+  for (let i = 1; i <= 12; i++) L.observe(led, mk(i <= 8 ? 1 - i * 0.05 : 0.6 + (i - 8) * 0.1), T0 + i * 5 * 60e3);
+  L.settle(led, { 'solana:MAE': 1.0 }, T0 + 60 * 60e3 + 1);
+  const sig = led.signals['first|solana:MAE'];
+  const rec = sig.r['1h'];
+  assert.ok(rec, '应已结算');
+  assert.ok(rec.mae != null && rec.mae < -0.3,
+    '中途跌到 0.6 就必须记下约 -40% 的最大浮亏，实际 ' + rec.mae);
 });
 
 ok('任意组合下统计结果不出现 NaN 或 undefined', () => {

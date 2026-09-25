@@ -61,8 +61,9 @@ function main() {
     + '    累计开仓：' + (led.counts.opened || 0)
     + '    完成结算：' + (led.counts.settled || 0)
     + '    记流失：' + (led.counts.gaveUp || 0));
-  console.log('榜单指数：' + led.index.length + ' 个采样点，当前净值 '
-    + (led.index.length ? L.summarize(led, {}).index.level.toFixed(4) : '—'));
+  console.log('榜单指数：' + led.index.length + ' 个采样点，等权净值 '
+    + (led.index.length ? L.summarize(led, {}).index.marketLevel.toFixed(4) : '—')
+    + '（中位口径参照 ' + (led.index.length ? L.summarize(led, {}).index.level.toFixed(4) : '—') + '）');
   console.log('');
 
   if (!signals) {
@@ -82,7 +83,8 @@ function main() {
   console.log('样本门槛：' + L.MIN_SAMPLE + ' 笔。低于门槛只报计数，不给胜率结论。');
   console.log('');
   console.log(pad('视界', 10) + padL('已结算', 8) + padL('待结算', 8) + padL('流失', 6)
-    + padL('胜率', 9) + padL('中位收益', 11) + padL('中位超额', 11) + padL('跑赢基准', 10));
+    + padL('胜率', 9) + padL('中位收益', 11) + padL('基准收益', 11)
+    + padL('中位超额', 11) + padL('跑赢基准', 10));
 
   for (const h of horizons) {
     const s = L.summarize(led, { horizon: h.key, why: onlyWhy, chain });
@@ -91,6 +93,7 @@ function main() {
       pad(h.label, 10) + padL(s.n, 8) + padL(s.waiting, 8) + padL(s.dead, 6)
       + padL(enough ? rate(s.winRate) : '积累中', 9)
       + padL(enough ? pct(s.median) : '—', 11)
+      + padL(enough ? (s.benchmark.marketReturn == null ? '无基准' : pct(s.benchmark.marketReturn)) : '—', 11)
       + padL(enough ? (s.benchmark.medianExcess == null ? '无基准' : pct(s.benchmark.medianExcess)) : '—', 11)
       + padL(enough ? rate(s.benchmark.beatRate) : '—', 10)
     );
@@ -122,7 +125,7 @@ function main() {
       + s.n + ' 笔已结算，胜率 ' + rate(s.winRate) + '，中位收益 ' + pct(s.median)
       + (s.benchmark.medianExcess == null
         ? '；同期榜单指数没有采样点，超额无法计算。'
-        : '；同期榜单指数 ' + pct(s.benchmark.medianReturn) + '，中位超额 ' + pct(s.benchmark.medianExcess)
+        : '；同期等权榜单指数 ' + pct(s.benchmark.marketReturn) + '，中位超额 ' + pct(s.benchmark.medianExcess)
           + '，跑赢基准 ' + rate(s.benchmark.beatRate) + '。'));
   }
   if (s.dead) {

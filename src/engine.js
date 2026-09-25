@@ -127,7 +127,8 @@
       try {
         localStorage.setItem(LEDGER_KEY, JSON.stringify({
           v: ledger.v, startedAt: ledger.startedAt, lastTs: ledger.lastTs, seq: ledger.seq,
-          signals: ledger.signals, index: ledger.index, indexLevel: ledger.indexLevel,
+          signals: ledger.signals, index: ledger.index,
+          indexLevel: ledger.indexLevel, marketLevel: ledger.marketLevel,
           prev: ledger.prev, counts: ledger.counts,
         }));
       } catch (e2) { /* 浏览器禁用或实在存不下，就只留在内存里 */ }

@@ -877,12 +877,13 @@ function renderBacktest() {
 
   // 基准：把「雷达选得准」和「那阵子全市场在涨」分开的唯一办法
   const benchRows = [
-    ['同期榜单指数收益（等权中位）', b.medianReturn == null ? '无采样点' : pctStr(b.medianReturn)],
-    ['信号中位超额（信号 − 指数）', b.medianExcess == null ? '无采样点' : pctStr(b.medianExcess)],
+    ['同期等权榜单指数收益（基准本体）', b.marketReturn == null ? '无采样点' : pctStr(b.marketReturn)],
+    ['信号中位超额（信号 − 基准）', b.medianExcess == null ? '无采样点' : pctStr(b.medianExcess)],
     ['跑赢基准的比例', b.beatRate == null ? '—' : rateStr(b.beatRate)],
     ['有基准的样本 / 缺基准的样本', `${b.available || 0} / ${b.missing || 0}`],
-    ['指数点数 / 当前净值', `${ix.points || 0} 点 · ${ix.level == null ? '—' : ix.level.toFixed(4)}`],
-    ['指数单轮中位波动', ix.medianRoundRet == null ? '—' : pctStr(ix.medianRoundRet)],
+    ['指数点数 / 等权净值', `${ix.points || 0} 点 · ${ix.marketLevel == null ? '—' : ix.marketLevel.toFixed(4)}`],
+    ['指数单轮等权波动', ix.marketRoundRet == null ? '—' : pctStr(ix.marketRoundRet)],
+    ['参照：指数单轮中位波动', ix.medianRoundRet == null ? '—' : pctStr(ix.medianRoundRet)],
   ].map(([k, v]) => `<tr><td>${esc(k)}</td><td><b>${esc(v)}</b></td></tr>`).join('');
 
   // 分层：档位越高是否确实越赚，这是龙分有没有区分度的直接证据
@@ -929,7 +930,7 @@ function renderBacktest() {
 
   const curve = (d.series || []).length >= 2
     ? `<canvas class="radar-bt-spark" data-bt-spark></canvas>
-       <p class="radar-note" style="margin-top:6px">榜单指数净值：每轮取「上一轮与这一轮都在榜」标的的轮间收益中位数，连乘而成。它偏向活得久的那批，与信号账本面对同一类幸存者问题 —— 但两者同向受影响，做比较仍然成立。</p>`
+       <p class="radar-note" style="margin-top:6px">榜单指数净值：每轮取「上一轮与这一轮都在榜」标的的轮间收益，做 10% 截尾后等权连乘而成。为什么不用中位数 —— 这类新池子里有大量「一分钟内价格完全没动」的标的，只要过半没动，当轮中位数就精确等于 0，整条线会永远贴在 1.0000，「跑赢基准」也就退化成「收益为正」，和胜率成了同一个数。它偏向活得久的那批，与信号账本面对同一类幸存者问题 —— 但两者同向受影响，做比较仍然成立。</p>`
     : '<p class="radar-empty">榜单指数还没有足够的采样点（单轮至少 3 个连续在榜标的才记点）。</p>';
 
   host.innerHTML = `

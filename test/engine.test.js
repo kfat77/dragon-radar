@@ -343,6 +343,10 @@ eq(E.SCAN_INTERVAL_MS, 60000, '扫描周期为 60 秒');
   eq(bt.body.summary.dead, 0, '刚开的信号不会被误记流失');
   eq(bt.body.summary.winRate, null, '没有已结算样本时胜率为 null，不是 0');
   ok(bt.body.summary.benchmark && bt.body.summary.benchmark.medianExcess === null, '缺基准时中位超额为 null，不用 0 冒充持平');
+  eq(bt.body.summary.benchmark.marketReturn, null, '缺基准时等权基准收益同样为 null');
+  ok(bt.body.summary.index && bt.body.summary.index.marketLevel >= 1,
+    '指数透出等权净值（基准本体）');
+  ok('marketRoundRet' in bt.body.summary.index, '指数透出单轮等权波动，缺的时候是 null 而不是 undefined');
   ok(Array.isArray(bt.body.summary.byGrade) && bt.body.summary.byGrade.length === 0, '无样本时分层为空数组');
   ok(Array.isArray(bt.body.samples) && bt.body.samples.length > 0, '明细按 state=all 返回，能看到未到点的信号');
   ok(bt.body.samples.every((x) => x.state === 'waiting' || x.state === 'settled' || x.state === 'lost'), '明细每行都带明确状态');
