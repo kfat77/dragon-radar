@@ -478,6 +478,31 @@ node tools/ledger-report.js --why=upgrade --chain=solana
 它证明的是「这套账本确实会记账、会结算、会自己算出不好看也不稳定的数」，
 **不是**对龙分长期有效性的判断。真实成交还要扣滑点与手续费，这里的收益是方向性收益。
 
+**1 小时视界的首批样本（22:45:36，同一段采集）**，正好把上面那句「当时还在积累中」补上：
+
+```text
+视界             已结算     待结算    流失       胜率       中位收益       基准收益       中位超额      跑赢基准
+1 小时            82      70     0    36.6%      -0.1%      -0.3%      -0.0%     48.8%
+
+按档位分层（1 小时 · 全部信号）
+  真龙               4    50.0%     +10.6%     +11.9%
+  龙头候选             9    55.6%      +0.6%      +2.6%
+  潜龙               6    33.3%      -3.2%      -3.7%
+  观察              26    34.6%      -1.0%      -0.3%
+  假龙              37    32.4%      +0.0%      +0.4%
+
+平均最大浮亏 -9.6%（82 笔有观测序列）。
+```
+
+三点：
+
+1. **1 小时视界上，信号和池子平均几乎分不开**：中位超额 −0.0%，跑赢基准 48.8% —— 基本是抛硬币。
+   这比 15 分钟视界那个会翻面的 +1% 更接近「没有边际」。不好看，但必须写。
+2. **最大浮亏随视界翻倍**：15 分钟 −4.9%，1 小时 **−9.6%**。持有时间越长，要先扛的坑越深 ——
+   这正是「只报收益不报回撤会让人高估这套信号」的实证。
+3. **前两档是唯一在两个视界上都为正的**：真龙 +11.9%、龙头候选 +2.6% 的 1 小时超额，
+   而潜龙 −3.7%。方向一致，但样本只有 4 笔和 9 笔，仍然不构成结论。
+
 ## 四、环境要求
 
 - **Node.js 18 或以上**（推荐 20 LTS）。低版本没有全局 `fetch`，服务与浏览器端引擎都无法运行。
@@ -1620,6 +1645,35 @@ accumulating at the time (the 1-hour horizon only starts settling from 22:42). I
 ledger genuinely records, settles and produces numbers that are neither flattering nor stable --
 **not** that the dragon score works over the long run. Real fills would also pay slippage and fees; the
 returns here are directional.
+
+**The first batch of 1-hour samples (22:45:36, same collection run)**, which closes out the
+"still accumulating" note above:
+
+```text
+Horizon   Settled  Waiting  Lost   Win rate  Median ret  Benchmark  Median excess  Beat benchmark
+1 hour         82       70     0     36.6%       -0.1%      -0.3%          -0.0%          48.8%
+
+By grade (1 hour, all signals)
+  Dragon       4   50.0%     +10.6%     +11.9%
+  Candidate    9   55.6%      +0.6%      +2.6%
+  Latent       6   33.3%      -3.2%      -3.7%
+  Watch       26   34.6%      -1.0%      -0.3%
+  Trash       37   32.4%      +0.0%      +0.4%
+
+Average maximum adverse excursion -9.6% (82 signals had an observation series).
+```
+
+Three points:
+
+1. **At the 1-hour horizon the signals are barely distinguishable from the pool average**: median
+   excess -0.0%, beat rate 48.8% -- essentially a coin flip. That is closer to "no edge" than the
+   15-minute reading's sign-flipping +1%. Unflattering, and it gets written down.
+2. **The drawdown doubles with the horizon**: -4.9% at 15 minutes versus **-9.6%** at 1 hour. The
+   longer you hold, the deeper the hole you must sit through first -- which is the empirical case for
+   never reporting a return without its drawdown.
+3. **The top two tiers are the only ones positive at both horizons**: Dragon at +11.9% and Candidate at
+   +2.6% excess at 1 hour, against Latent at -3.7%. The direction is consistent, but with 4 and 9
+   samples these are still not conclusions.
 
 ## 4. Requirements
 
