@@ -420,50 +420,63 @@ node tools/ledger-report.js --why=upgrade --chain=solana
   所以这里报的是**信号的方向性收益**，不是可实现收益。
 - 15 分钟视界的噪声最大；样本量相同时，越长的视界越可靠，但积样本也越慢。
 
-### 3c.7 首次线上读数（实测，含不好看的数）
+### 3c.7 首次线上读数：为什么单次快照不是结论
 
-下面这一段是**真实跑出来的**，不是示意。口径修正提交后，服务在 2026-09-25 21:42 到 21:57
-连续跑了 15 轮，攒到 116 个信号、68 笔 15 分钟视界结算样本。原始输出：
+下面这一段是**真实跑出来的**，不是示意。口径修正提交后，服务从 2026-09-25 21:42 起持续运行，
+每 10 分钟导出一次同一份账本的读数。原始输出摘录：
 
 ```text
 抓龙胜率报告（前瞻记录 + 事后结算，不做历史回放）
-开始记录：2026/9/25 21:42:22    最后推进：2026/9/25 21:57:36
-扫描轮次：15    存续信号：116    累计开仓：116    完成结算：68    记流失：0
-榜单指数：14 个采样点，等权净值 0.9943（中位口径参照 1.0000）
-
-视界             已结算     待结算    流失       胜率       中位收益       基准收益       中位超额      跑赢基准
-15 分钟           68      48     0    23.5%      -0.6%      +1.9%      -3.2%     42.6%
-1 小时             0     116     0      积累中          —          —          —         —
-6 小时             0     116     0      积累中          —          —          —         —
-24 小时            0     116     0      积累中          —          —          —         —
+开始记录：2026/9/25 21:42:22    最后推进：22:29:37
+扫描轮次：47    存续信号：144    累计开仓：144    完成结算：129    记流失：0
+榜单指数：46 个采样点，等权净值 0.9842（中位口径参照 1.0000）
 
 按档位分层（15 分钟 · 全部信号）
-  真龙               4   100.0%     +22.1%     +21.0%
-  龙头候选             8    25.0%      -2.7%      -3.8%
-  潜龙               6    33.3%      -0.9%      -5.2%
-  观察              25    20.0%      -0.8%      -3.2%
-  假龙              25    12.0%      -0.4%      -4.2%
+  档位              样本       胜率       中位收益       中位超额
+  真龙               5    80.0%     +18.0%     +13.7%
+  龙头候选            20    50.0%      -0.2%      +0.9%
+  潜龙               9    44.4%      -0.4%      -4.7%
+  观察              34    20.6%      -0.3%      +0.2%
+  假龙              61    19.7%      +0.0%      +1.7%
 
-平均最大浮亏 -4.3%（67 笔有观测序列）。
+平均最大浮亏 -4.9%（124 笔有观测序列）。
 ```
 
-四条值得单独拎出来的观察：
+同一时刻的完整分布：中位收益 0.0%，**均值 −1.2%**（比中位更差），p25 −1.9%，p75 +0.8%，
+最好 +68.0%，最差 −94.4%。胜率 28.7% 配上负均值，说明这批信号是「多数小亏 + 少数大赚但
+尾部更糟」的形态 —— 只看胜率会把它读成「三成机会」，只看均值会把它读成「必亏」。
 
-1. **「胜率」和「跑赢基准」终于不是同一个数了**：23.5% 对 42.6%。口径修正前它们由构造决定
-   必然相等，现在分开了 —— 这是本次修正最直接的验收点。
-2. **基准不再贴 0**：同期等权榜单指数 +1.9%，而中位口径的净值是 1.0000。两个口径已经分开。
-3. **这一段样本里，雷达没有跑赢自己的池子。** 中位超额 −3.2%，跑赢基准的比例 42.6%，
-   低于一半。也就是说：15 分钟视界下，信号的中位表现比池子里的等权平均还差 3.2 个百分点。
-   这个数不好看，但它是这个模块存在的理由 —— 如果只报「胜率 23.5%」，你不会知道
-   同期闭着眼睛买池子里的平均标的反而更好。
-4. **档位分层方向是对的**：真龙 4 笔全胜、中位 +22.1%、超额 +21.0%；
-   往下逐档走低（潜龙 n=6 略高于龙头候选，样本太小不作数）。
-   但真龙只有 4 笔 —— **4 笔不能证明任何事**，这里只是把它如实列出来，等样本攒够再谈。
+**但同一份账本，前后五次快照给出的结论是互相打架的：**
 
-必须说清的边界：这只是**单个 15 分钟窗口里的一轮采集**，68 笔，未跨行情、未跨日，
-1 小时 / 6 小时 / 24 小时三个视界全部还在积累中。它说明的是「这套账本确实会记账、
-会结算、会自己算出不好看的数」，**不是**对龙分长期有效性的判断。
-真实成交还要扣滑点与手续费，这里的收益是方向性收益。
+| 快照时间 | 已结算 | 胜率 | 中位收益 | 基准收益 | 中位超额 | 跑赢基准 | 等权净值 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 21:57 | 68 | 23.5% | −0.6% | +1.9% | **−3.2%** | 42.6% | 0.9943 |
+| 22:04 | 90 | 22.2% | −0.3% | −0.6% | −2.2% | 43.3% | 0.9861 |
+| 22:14 | 118 | 25.4% | +0.0% | −2.1% | **+1.0%** | 55.1% | 0.9726 |
+| 22:24 | 125 | 28.0% | +0.0% | −2.1% | +1.2% | 55.2% | 0.9799 |
+| 22:29 | 129 | 28.7% | +0.0% | −2.1% | +0.9% | 54.3% | 0.9842 |
+
+十七分钟里，中位超额从 **−3.2% 翻到 +1.0%**：先是「雷达跑输自己的池子 3 个百分点」，
+再变成「跑赢 1 个百分点」。**这两个说法没有一个是结论** —— 变的是那 15 分钟里
+等权榜单指数自己从 +1.9% 掉到 −2.1%（净值 0.9943 → 0.9726），而样本也从 68 笔涨到 118 笔。
+
+这段漂移恰恰是这个模块存在的全部理由：
+
+- 如果只报「胜率 23.5%」，它看起来像雷达不行；只报「28.7%」，又像勉强能用。
+  两个数都没说谎，但少了基准和一个时间戳，谁都读不出「这 15 分钟池子整体在跌」。
+- **中位口径的净值从头到尾是 1.0000**，一次都没动过。这就是它不能当基准的证据 ——
+  同一段时间里，等权口径从 0.9943 走到 0.9842，中位口径连一位小数都没变。
+- 17 分钟内样本从 68 涨到 118，数字还在换，说明**样本量本身也还不够**。
+  门槛设在 30 笔是为了拦住「几笔就下结论」，而不是说 30 笔就够用了。
+
+档位分层是这份数据里唯一从头到尾方向一致的信号：真龙 5 笔 80% 胜、中位 +18.0%、
+超额 +13.7%，往下逐档走低，假龙 61 笔只有 19.7%。但**真龙那 5 笔不能证明任何事**，
+列出来是因为它是账本如实算出来的，不是因为它是结论。
+
+必须说清的边界：以上全部来自**一个晚上的连续采集**，未跨行情、未跨日，
+1 小时 / 6 小时 / 24 小时三个视界当时全部还在积累中（1 小时视界从 22:42 起才会陆续结算）。
+它证明的是「这套账本确实会记账、会结算、会自己算出不好看也不稳定的数」，
+**不是**对龙分长期有效性的判断。真实成交还要扣滑点与手续费，这里的收益是方向性收益。
 
 ## 四、环境要求
 
@@ -1540,56 +1553,73 @@ as attrition rather than as neutral. For continuous collection, run the Node mod
 - The 15-minute horizon is the noisiest. At equal sample size, longer horizons are more reliable
   but take longer to accumulate.
 
-### 3c.7 First live reading (measured, including the unflattering numbers)
+### 3c.7 First live readings: why a single snapshot is not a result
 
-What follows is **actually measured**, not an illustration. After the calibration fix the service
-ran 15 consecutive rounds from 21:42 to 21:57 on 2026-09-25, accumulating 116 signals and 68 settled
-15-minute samples. Raw output:
+What follows is **actually measured**, not an illustration. After the calibration fix the service ran
+continuously from 21:42 on 2026-09-25, exporting the same ledger every 10 minutes. Excerpt of the raw
+output:
 
 ```text
 Hit rate report (forward record + later settlement, no historical replay)
-Started: 2026/9/25 21:42:22    Last advanced: 2026/9/25 21:57:36
-Rounds: 15    Live signals: 116    Opened: 116    Settled: 68    Lost: 0
-Board index: 14 sample points, equal-weighted net value 0.9943 (median variant reference 1.0000)
-
-Horizon      Settled  Waiting  Lost   Win rate  Median ret  Benchmark  Median excess  Beat benchmark
-15 minutes        68       48     0     23.5%       -0.6%      +1.9%          -3.2%          42.6%
-1 hour             0      116     0   accumulating       --          --             --             --
-6 hours            0      116     0   accumulating       --          --             --             --
-24 hours           0      116     0   accumulating       --          --             --             --
+Started: 2026/9/25 21:42:22    Last advanced: 22:29:37
+Rounds: 47    Live signals: 144    Opened: 144    Settled: 129    Lost: 0
+Board index: 46 sample points, equal-weighted net value 0.9842 (median variant reference 1.0000)
 
 By grade (15 minutes, all signals)
-  Dragon              4   100.0%     +22.1%     +21.0%
-  Candidate           8    25.0%      -2.7%      -3.8%
-  Latent              6    33.3%      -0.9%      -5.2%
-  Watch              25    20.0%      -0.8%      -3.2%
-  Trash              25    12.0%      -0.4%      -4.2%
+  Grade        n    Win rate  Median ret  Median excess
+  Dragon       5      80.0%      +18.0%          +13.7%
+  Candidate   20      50.0%       -0.2%           +0.9%
+  Latent       9      44.4%       -0.4%           -4.7%
+  Watch       34      20.6%       -0.3%           +0.2%
+  Trash       61      19.7%       +0.0%           +1.7%
 
-Average maximum adverse excursion -4.3% (67 signals had an observation series).
+Average maximum adverse excursion -4.9% (124 signals had an observation series).
 ```
 
-Four observations worth pulling out:
+Full distribution at the same moment: median return 0.0%, **mean -1.2%** (worse than the median),
+p25 -1.9%, p75 +0.8%, best +68.0%, worst -94.4%. A 28.7% win rate with a negative mean means this
+cohort is shaped like "many small losses plus a few large wins, but a worse tail" -- reading only the
+win rate turns it into "a three-in-ten chance", and reading only the mean turns it into "guaranteed
+loss".
 
-1. **"Win rate" and "beat the benchmark" are finally not the same number**: 23.5% versus 42.6%.
-   Before the calibration fix they were identical by construction. This is the most direct
-   acceptance check for the fix.
-2. **The benchmark is no longer pinned at 0**: the equal-weighted board index over the same window
-   was +1.9%, while the median variant's net value is 1.0000. The two definitions have separated.
-3. **On this sample the radar did not beat its own pool.** Median excess is -3.2% and the share of
-   signals beating the benchmark is 42.6%, below half. In other words, at the 15-minute horizon the
-   median signal did 3.2 percentage points worse than the equal-weighted average of the pool. That
-   number is unflattering, and it is exactly why this module exists: a report showing only
-   "win rate 23.5%" would not tell you that buying the pool's average token blind did better.
-4. **The grade layering points the right way**: Dragon, 4 signals, all winners, median +22.1%,
-   excess +21.0%; the tiers decline from there (Latent at n=6 edges above Candidate; too small to
-   read). But Dragon has only 4 signals -- **4 signals prove nothing**, and the table is shown
-   simply because it is the honest output, not because it is a result.
+**Yet five snapshots of the same ledger disagree with one another:**
 
-The boundary has to be stated: this is **one collection run inside a single 15-minute window**,
-68 samples, no cross-regime or multi-day coverage, and the 1-hour, 6-hour and 24-hour horizons are
-still accumulating. What it demonstrates is that the ledger genuinely records, settles and produces
-numbers it did not get to choose -- **not** that the dragon score works over the long run. Real fills
-would also pay slippage and fees; the returns here are directional.
+| Snapshot | Settled | Win rate | Median ret | Benchmark | Median excess | Beat benchmark | Eq-weight net value |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 21:57 | 68 | 23.5% | -0.6% | +1.9% | **-3.2%** | 42.6% | 0.9943 |
+| 22:04 | 90 | 22.2% | -0.3% | -0.6% | -2.2% | 43.3% | 0.9861 |
+| 22:14 | 118 | 25.4% | +0.0% | -2.1% | **+1.0%** | 55.1% | 0.9726 |
+| 22:24 | 125 | 28.0% | +0.0% | -2.1% | +1.2% | 55.2% | 0.9799 |
+| 22:29 | 129 | 28.7% | +0.0% | -2.1% | +0.9% | 54.3% | 0.9842 |
+
+In seventeen minutes the median excess **flipped from -3.2% to +1.0%**: first "the radar trails its
+own pool by 3 points", then "it leads by 1 point". **Neither statement is a result.** What changed
+was that during those 15 minutes the equal-weighted board index itself fell from +1.9% to -2.1%
+(net value 0.9943 to 0.9726), while the sample grew from 68 to 118.
+
+This drift is the entire reason the module exists:
+
+- Reporting only "win rate 23.5%" makes the radar look useless; reporting only "28.7%" makes it look
+  passable. Neither number lies, but without the benchmark and a timestamp there is no way to read
+  "the whole pool was falling during these 15 minutes" out of either one.
+- **The median variant's net value stayed at 1.0000 the whole time**, not moving once. That is the
+  evidence that it cannot serve as the benchmark: over the same stretch the equal-weighted variant
+  travelled from 0.9943 to 0.9842 while the median variant did not move a single decimal.
+- The sample grew from 68 to 118 in 17 minutes and the numbers were still moving, which says the
+  sample size itself is not yet sufficient. The gate at 30 samples exists to block "a handful of
+  trades is a conclusion", not to claim that 30 is enough.
+
+The grade layering is the one signal that pointed the same way throughout: Dragon, 5 signals, 80% win
+rate, median +18.0%, excess +13.7%, declining tier by tier down to Trash at 19.7% over 61 signals.
+But **those 5 Dragon signals prove nothing**; they are listed because they are what the ledger
+honestly produced, not because they are a conclusion.
+
+The boundary must be stated: all of the above comes from **a single evening of continuous collection**,
+with no cross-regime or multi-day coverage, and the 1-hour, 6-hour and 24-hour horizons were all still
+accumulating at the time (the 1-hour horizon only starts settling from 22:42). It demonstrates that the
+ledger genuinely records, settles and produces numbers that are neither flattering nor stable --
+**not** that the dragon score works over the long run. Real fills would also pay slippage and fees; the
+returns here are directional.
 
 ## 4. Requirements
 
