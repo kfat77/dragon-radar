@@ -10,6 +10,7 @@
     "test:checkup": "node test/checkup.test.js",
     "test:frontend": "node test/frontend.smoke.js",
     "test:static": "node test/static.smoke.js",
+    "test:live": "node test/live.verify.js",
     "serve:static": "node tools/serve-static.js"
   },
   "keywords": [

@@ -6,7 +6,8 @@
  *   安全 —— 硬红线是否一票否决；所有权已放弃时 owner 类风险是否正确降级（否则会把
  *           PEPE 这种成熟标的判死）；仿盘与「自己就是龙头」是否分得清。
  *   叙事 —— 五个阶段（萌芽 / 传播 / 常态 / 高潮 / 退潮）的判定与方向性。
- *   筹码 —— 集中度是否剔除池子 / 销毁 / 锁仓地址；「集中度 × 退出通道」是否真的
+ *   筹码 —— 集中度是否剔除池子 / 销毁 / 锁仓地址（含 Solana 上「账户地址不是池子、
+ *           但 owner 是池子」的储备账户）；「集中度 × 退出通道」是否真的
  *           比单看集中度更准（大市值高集中不该判死，人少且池子是唯一出口才该判死）。
  *   位置 —— 仓位是否由风险预算倒推、是否取三者最小值、是否按阶段调整止损距离。
  *
@@ -287,6 +288,21 @@ ok('量价背离会被识别并扣分', () => {
   assert.strictEqual(n.divergence, true, '应识别为背离');
 });
 
+// 拿不到行情时不能默认「常态」：那是最像好消息的默认值，也最容易被当成结论。
+ok('完全没有行情：阶段标未知，数值字段置空，不默认成「常态」', () => {
+  const n = narrativeDimension(null, null, sec());
+  assert.strictEqual(n.stageKnown, false);
+  assert.strictEqual(n.txnShare, null);
+  assert.strictEqual(n.txnBurst, null);
+  assert.strictEqual(n.priceRun, null);
+  assert.strictEqual(n.score, 0);
+  const chk = n.checks.find((x) => x.name === '成交流水数据');
+  assert.ok(chk && chk.pass === false, '必须留一条不通过的核对项');
+  assert.ok(n.notes.some((x) => /缺数据不判绿/.test(x)));
+  // 有行情时必须明确标成已知，否则渲染层会一直按缺数据渲染
+  assert.strictEqual(narrativeDimension(tok(), null, sec()).stageKnown, true);
+});
+
 // ================================================================ 筹码
 console.log('四维体检 · 筹码维度');
 
@@ -324,6 +340,78 @@ ok('已锁仓地址同样剔除', () => {
   }), tok());
   assert.strictEqual(c.top10Pct, 15, '锁仓的 30% 不该计入集中度，实际 ' + c.top10Pct);
   assert.ok(c.excludedHolders.some((x) => x.why === '已锁仓'));
+});
+
+// Solana 上前排名单给的是「代币账户地址」，池子的储备账户 owner 才是池子本身。
+// 只比对 address 会永久匹配不上，把一个刚开盘的池子储备当成 76% 的巨鲸直接判死。
+ok('Solana 池子储备账户：地址不是池子但 owner 是池子，必须剔除，不得判致命', () => {
+  const POOL = 'CDZMG8hza43irMPes1mXnKdCByt13hdcHZMbztXaRP9j';
+  const RESERVE = '5nppyYH2xQBFpq3DbH2t8Ni984w9XnDbMAcmx1eBDFi7';
+  const t = tok({ chainId: 'solana', tokenAddress: 'mint', pairAddress: POOL, fdv: 3e5, marketCap: 3e5, liquidityUsd: 40000 });
+  const s = sec({
+    chainId: 'solana', isSolana: true, pairAddress: POOL,
+    contract: {
+      holderCount: 957, top10Pct: 89.31, ownerRenounced: true,
+      topHolders: [
+        { address: RESERVE, pct: 76.23, owner: POOL, insider: false },
+        { address: 'h2', pct: 3.03 }, { address: 'h3', pct: 2.3 }, { address: 'h4', pct: 2 },
+        { address: 'h5', pct: 1.8 }, { address: 'h6', pct: 1.5 },
+      ],
+    },
+  });
+  const c = chipsDimension(s, t);
+  assert.strictEqual(c.poolExcluded, 1, '应剔除 1 个池子储备账户，实际 ' + c.poolExcluded);
+  assert.ok(c.excludedHolders.some((x) => /账户归属池子/.test(x.why)), '剔除原因应说明是按 owner 判定的');
+  assert.strictEqual(c.top10Pct, 10.63, '76.23% 是池子储备，剔除后应为 10.63%，实际 ' + c.top10Pct);
+  assert.strictEqual(c.hard.length, 0, '不得因为池子储备量给出致命项：' + JSON.stringify(c.hard));
+  assert.strictEqual(c.critical, false);
+  assert.ok(c.notes.some((x) => /流动性池储备/.test(x)), '应在说明里交代剔除了池子储备，结论可复核');
+});
+
+// 一个代币往往有几十上百个市场。只比 DexScreener 给出的那一个池子会漏掉其余市场，
+// 而前排储备恰好落在哪个市场是不确定的。
+ok('rugFull.poolAddresses 里的其他市场池子同样剔除，不能只认 DexScreener 那一个池子', () => {
+  const OTHER_POOL = 'RaydiumPoolAddress1111111111111111111111111';
+  const s = sec({
+    rugFull: {
+      graphInsidersDetected: 0, insiderPct: 0, creatorTokens: 0, creatorBalance: 0,
+      topHolders: [], poolAddresses: [OTHER_POOL.toLowerCase()], marketCount: 3,
+    },
+    contract: {
+      holderCount: 3000,
+      topHolders: [
+        { address: 'reserveAcct', pct: 70, owner: OTHER_POOL },
+        { address: 'h2', pct: 5 }, { address: 'h3', pct: 4 }, { address: 'h4', pct: 3 },
+        { address: 'h5', pct: 2 }, { address: 'h6', pct: 1 },
+      ],
+    },
+  });
+  const c = chipsDimension(s, tok());
+  assert.strictEqual(c.poolExcluded, 1, '实际 ' + c.poolExcluded);
+  assert.strictEqual(c.top10Pct, 15, '实际 ' + c.top10Pct);
+});
+
+// 反向护栏：剔除规则必须只对「有证据是池子」的地址生效。
+// 放宽成「owner 看起来像地址就剔」会把真实巨鲸一起放过，那比不剔更危险。
+ok('owner 不在池子名单里的真实巨鲸不得被剔除，致命判定照旧', () => {
+  const s = sec({
+    rugFull: {
+      graphInsidersDetected: 0, insiderPct: 0, creatorTokens: 0, creatorBalance: 0,
+      topHolders: [], poolAddresses: ['someOtherPool1111111111111111111111111'],
+    },
+    contract: {
+      holderCount: 800,
+      topHolders: [
+        { address: 'whale', pct: 55, owner: 'whaleOwnWallet11111111111111111111111' },
+        { address: 'h2', pct: 4 }, { address: 'h3', pct: 3 }, { address: 'h4', pct: 2 },
+        { address: 'h5', pct: 1.5 }, { address: 'h6', pct: 1 },
+      ],
+    },
+  });
+  const c = chipsDimension(s, tok());
+  assert.strictEqual(c.poolExcluded, 0, '不该剔除非池子地址，实际 ' + c.poolExcluded);
+  assert.strictEqual(c.top10Pct, 66.5, '实际 ' + c.top10Pct);
+  assert.strictEqual(c.critical, true, '人少 + 高集中仍然是致命结构，不能被剔除规则掩盖');
 });
 
 ok('人少 + 池子是唯一出口 = 致命，且结论直接放弃', () => {
@@ -389,6 +477,24 @@ ok('持币地址未取得：不给通过分，也不谎称发现问题', () => {
   assert.ok(c.score <= 55, '缺数据不给通过分，实际 ' + c.score);
   assert.strictEqual(c.hard.length, 0, '硬红线必须建立在证据上，不能建立在「没查到」上');
   assert.strictEqual(c.channelLabel, '未知（未取得持币地址数）');
+});
+
+// 完全没有持有人分布时必须显式给 null，不能留 undefined：
+// 渲染层一旦把 undefined 印成「前十大 undefined%」「抛压 0 倍」，
+// 「没查到」就变成了看起来像结论的数字。
+ok('完全拿不到持有人分布：数值字段显式置空，并留下一条不通过的核对项', () => {
+  const s = sec({ contract: {} });
+  s.contract.holders = null;
+  const c = chipsDimension(s, tok());
+  assert.strictEqual(c.level, 'unknown');
+  assert.strictEqual(c.score, 0);
+  for (const k of ['top10Pct', 'holderCount', 'dumpRatio', 'lpLockedPct']) {
+    assert.strictEqual(c[k], null, k + ' 应为 null，实际 ' + c[k]);
+  }
+  assert.strictEqual(c.concSource, '');
+  assert.strictEqual(c.excludedHolders.length, 0);
+  const chk = c.checks.find((x) => x.name === '持有人分布');
+  assert.ok(chk && chk.pass === false, '必须留一条不通过的核对项');
 });
 
 // ================================================================ 位置

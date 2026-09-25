@@ -569,23 +569,36 @@ function cuHtml(rep, chainId, addr) {
   ].join('');
 
   // ---- 叙事：给的是传播载体与强度，故事内容必须人工判断
+  // 没有成交流水时 txnShare 会退化成 0，那串「0 倍」看着像结论其实没有信息量，直接不渲染。
+  const hasNar = n.stageKnown !== false;
   const nBody = [
-    `<p class="radar-cu-line">传播阶段 <b>${esc(n.stageLabel || '—')}</b>${n.divergence ? ' · <b class="is-bad">量价背离</b>' : ''}</p>`,
+    `<p class="radar-cu-line">传播阶段 <b>${hasNar ? esc(n.stageLabel || '—') : '未知（未取到成交流水）'}</b>${n.divergence ? ' · <b class="is-bad">量价背离</b>' : ''}</p>`,
     `<div class="radar-cu-tags">${(n.bearers || []).length
       ? n.bearers.map((b) => `<span class="is-ok">${esc(b)}</span>`).join('')
       : '<span class="is-bad">无任何传播载体</span>'}</div>`,
-    `<p class="radar-cu-line">近 1 小时成交笔数相当于日均 <b>${n.txnShare}</b> 倍，瞬时加速度 <b>${n.txnBurst}</b> 倍，24 小时价格 <b>${n.priceRun}%</b>${n.holderGrowthPct == null ? '' : '，持币地址较上次体检 <b>' + (n.holderGrowthPct >= 0 ? '+' : '') + n.holderGrowthPct + '%</b>'}</p>`,
+    hasNar
+      ? `<p class="radar-cu-line">近 1 小时成交笔数相当于日均 <b>${n.txnShare}</b> 倍，瞬时加速度 <b>${n.txnBurst}</b> 倍，24 小时价格 <b>${n.priceRun}%</b>${n.holderGrowthPct == null ? '' : '，持币地址较上次体检 <b>' + (n.holderGrowthPct >= 0 ? '+' : '') + n.holderGrowthPct + '%</b>'}</p>`
+      : '',
     `<ul class="radar-cu-list">${cuChecks(n.checks)}</ul>`,
     paras(n.notes),
   ].join('');
 
   // ---- 筹码：集中度 × 退出通道宽窄。人数少且池子是唯一出口，才是致命的。
+  // 数字缺失时必须写「未取得」。渲染成 undefined 或 0，会被当成「筹码分散」这种结论读走。
+  const nz = (v, unit) => (v == null || v === '' ? '未取得' : v + (unit || ''));
+  const hasChips = c.top10Pct != null;
   const cBody = [
     redLine(c.hard),
-    `<p class="radar-cu-line">前十大 <b>${c.top10Pct}%</b>（第一名单个 ${c.top1Pct}%）· DEV / owner 自留 <b>${c.devPct}%</b> · 持币地址 <b>${c.holderCount || '未取得'}</b></p>`,
-    `<p class="radar-cu-line">前十大潜在抛压 <b>${usd(c.dumpUsd)}</b>，等于池子深度的 <b>${c.dumpRatio} 倍</b></p>`,
-    `<p class="radar-cu-line">退出通道：<b>${esc(c.channelLabel || '—')}</b> · LP 锁定 ${c.lpLockedPct}%${c.insiderPct == null ? '' : ' · 关联地址持仓 ' + c.insiderPct + '%'}</p>`,
-    `<p class="radar-cu-line">集中度口径：${esc(c.concSource || '')}</p>`,
+    hasChips
+      ? `<p class="radar-cu-line">前十大 <b>${c.top10Pct}%</b>（第一名单个 ${c.top1Pct}%）· DEV / owner 自留 <b>${c.devPct}%</b> · 持币地址 <b>${nz(c.holderCount)}</b></p>`
+      : '<p class="radar-cu-line">前十大集中度：<b class="is-bad">未取得</b>（没有前排名单就判断不了筹码在谁手里，这不等于安全）</p>',
+    hasChips
+      ? `<p class="radar-cu-line">前十大潜在抛压 <b>${usd(c.dumpUsd)}</b>，等于池子深度的 <b>${c.dumpRatio} 倍</b></p>`
+      : '',
+    hasChips
+      ? `<p class="radar-cu-line">退出通道：<b>${esc(c.channelLabel || '—')}</b> · LP 锁定 ${nz(c.lpLockedPct, '%')}${c.insiderPct == null ? '' : ' · 关联地址持仓 ' + c.insiderPct + '%'}</p>`
+      : '',
+    hasChips ? `<p class="radar-cu-line">集中度口径：${esc(c.concSource || '')}</p>` : '',
     `<ul class="radar-cu-list">${cuChecks(c.checks)}</ul>`,
     deducts(c.warn),
     paras(c.notes),
@@ -614,7 +627,7 @@ function cuHtml(rep, chainId, addr) {
     <p class="radar-cu-summary">${esc(rep.summary || '')}</p>
     <div class="radar-cu-grid">
       ${cuDim('安全 · 合约能不能碰', s.score, s.level, sBody)}
-      ${cuDim('叙事 · 故事还传不传得动', n.score, n.stage === 'ebb' ? 'high' : 'low', nBody)}
+      ${cuDim('叙事 · 故事还传不传得动', n.score, hasNar ? (n.stage === 'ebb' ? 'high' : 'low') : 'unknown', nBody)}
       ${cuDim('筹码 · 在谁手里', c.score, c.level, cBody)}
     </div>
     <div class="radar-cu-pos">

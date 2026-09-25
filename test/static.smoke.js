@@ -101,10 +101,14 @@ SYMS.forEach((s, i) => { byAddr[s[1]] = [pair(s, i)]; });
 const addrToSym = {};
 SYMS.forEach((s, i) => { addrToSym[('0x' + s[1].padEnd(38, '0') + i).toLowerCase()] = s[1]; });
 const pairOf = (sym) => 'PAIR' + sym;
+// 这个符号的合约在 GoPlus 里查不到，用来覆盖「风控源未收录」这条缺数据路径
+const NO_DATA_SYM = 'WOJAK';
 
 // EVM：GoPlus 的 percent 是 0-1 小数；holder_count 必须是字符串
 function goplusEvmPayload(a) {
   const sym = addrToSym[a] || '';
+  // 风控源完全没收录该合约：用来验证「缺数据」那条路径不会把结论印成 undefined / 0。
+  if (sym === NO_DATA_SYM) return { code: 1, result: {} };
   return {
     code: 1,
     result: {
@@ -154,8 +158,15 @@ function goplusSolPayload(a) {
 }
 
 function rugcheckPayload() {
+  const pool = pairOf('DRGN');
+  // 另一个市场的池子。它只会出现在 markets[].pubkey 里，DexScreener 的 pairAddress 是另一个，
+  // 所以这一条专门用来锁住「不能只认 DexScreener 那一个池子」。
+  const otherPool = 'RaydiumOtherPool1111111111111111111111111';
   const th = [
-    { address: pairOf('DRGN'), pct: 40, insider: false },
+    // Solana 上前排给的是代币账户地址，owner 才是池子。只比 address 会把这个
+    // 40% 的池子储备当成巨鲸，把刚开盘的池子直接判死。
+    { address: 'ReserveAcct1', pct: 40, owner: pool, insider: false },
+    { address: 'ReserveAcct2', pct: 6, owner: otherPool, insider: false },
     { address: 'a1', pct: 4 }, { address: 'a2', pct: 3 }, { address: 'a3', pct: 3 },
     { address: 'a4', pct: 2 }, { address: 'a5', pct: 2 }, { address: 'a6', pct: 2 },
     { address: 'a7', pct: 1.5 }, { address: 'a8', pct: 1.5 }, { address: 'a9', pct: 1 },
@@ -166,7 +177,10 @@ function rugcheckPayload() {
     mintAuthority: null, freezeAuthority: null, rugged: false,
     graphInsidersDetected: 0, insiderNetworks: [], totalHolders: 5448,
     totalLPProviders: 12, totalMarketLiquidity: 42000,
-    markets: [{ lp: { lpLockedPct: 92.5, lpLockedUSD: 38850 } }],
+    markets: [
+      { pubkey: pool, marketType: 'raydium', lp: { lpLockedPct: 92.5, lpLockedUSD: 38850 } },
+      { pubkey: otherPool, marketType: 'pump_fun_amm', lp: { lpLockedPct: 40, lpLockedUSD: 2100 } },
+    ],
     risks: [], lockers: {}, topHolders: th,
   };
 }
@@ -426,6 +440,8 @@ const SCRIPTS = ['lib/score.js', 'lib/sources.js', 'lib/security.js', 'lib/check
   ok('体检给出结论', /可参与|小仓试错|不追|观察|直接放弃|数据不足/.test(evmPanel.querySelector('.radar-checkup-head').textContent));
   ok('体检标明数据来源', /goplus|honeypot\.is|dexscreener-search/.test(evmPanel.textContent));
   ok('集中度已剔除池子与销毁地址', /剔除池子\/销毁\/锁仓后重算/.test(evmPanel.textContent));
+  // 缺数据最容易被印成 undefined / NaN，而它们看起来像结论。两个面板都拦一遍。
+  ok('EVM 体检面板不出现 undefined 或 NaN', !/undefined|NaN/.test(evmPanel.textContent));
   ok('体检带重跑按钮', !!evmPanel.querySelector('[data-cu-refresh]'));
   ok('卡片头部挂上四维结论徽标（当前文档内）', !!cardOf(evmSym).querySelector('.radar-cu-badge[data-cu-slot]'));
   ok('体检面板带免责声明', /不构成投资建议/.test(evmPanel.textContent));
@@ -451,6 +467,36 @@ const SCRIPTS = ['lib/score.js', 'lib/sources.js', 'lib/security.js', 'lib/check
   ok('Solana 体检调用 RugCheck', calledUrls.some((u) => u.includes('api.rugcheck.xyz')), '未调用 rugcheck');
   ok('Solana 筹码由 RugCheck 补齐（含持币地址数）', /持币地址 <b>5448<\/b>/.test(solPanel.innerHTML), solPanel.textContent.slice(0, 200));
   ok('Solana 体检标明数据来源含 rugcheck', /rugcheck/.test(solPanel.textContent));
+  // Solana 上前排「持有人」给的是代币账户，owner 才是池子。只比 address 会把这个 40% 的
+  // 池子储备当成巨鲸，把刚开盘的池子直接判死 —— 这条锁住 owner 维度的剔除确实生效。
+  ok('Solana 池子储备账户（owner 命中池子）已剔除并说明',
+    /流动性池储备/.test(solPanel.textContent), solPanel.textContent.slice(0, 300));
+  ok('集中度按剔除池子储备后重算，且不再据此判致命',
+    /剔除池子\/销毁\/锁仓后重算/.test(solPanel.textContent)
+      && !/少数地址可以一次性出货/.test(solPanel.textContent));
+  ok('Solana 体检面板不出现 undefined 或 NaN', !/undefined|NaN/.test(solPanel.textContent));
+
+  // 14) 风控源完全未收录该合约：缺数据必须写成「未取得」，不能印成
+  //     「前十大 undefined%」「抛压 0 倍」这种看起来像结论的东西。
+  const ndCard = $$('.radar-card').find((c) => {
+    const h = c.querySelector('.radar-title h3');
+    return h && h.textContent === NO_DATA_SYM;
+  });
+  ok('找到风控源未收录的标的用于体检', !!ndCard);
+  ndCard.querySelector('[data-cu-btn]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const ndPanelOf = () => { const c = cardOf(NO_DATA_SYM); return c && c.querySelector('[data-cu-body]'); };
+  for (let i = 0; i < 120 && !(ndPanelOf() && ndPanelOf().querySelector('.radar-cu-dim')); i++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  const ndPanel = ndPanelOf();
+  ok('未收录合约的体检也能渲染出四维', !!(ndPanel && ndPanel.querySelector('.radar-cu-dim')),
+    ndPanel ? ndPanel.textContent.slice(0, 120) : '(无面板)');
+  ok('缺数据的面板不出现 undefined 或 NaN', !/undefined|NaN/.test(ndPanel.textContent),
+    (ndPanel.textContent.match(/[^。]{0,50}(undefined|NaN)[^。]{0,50}/) || [''])[0]);
+  ok('缺数据时筹码写明「未取得」而不是留白',
+    /前十大集中度：<b class="is-bad">未取得<\/b>/.test(ndPanel.innerHTML));
+  ok('缺数据时叙事也不假报「常态」', /未知（未取到成交流水）/.test(ndPanel.textContent));
+  ok('缺数据时结论为数据不足', /数据不足/.test(ndPanel.querySelector('.radar-checkup-head').textContent));
 
   // 13) 改总资金会让下一轮体检按新口径倒推仓位
   const cap = $('[data-radar-capital]');

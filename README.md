@@ -211,11 +211,18 @@ tracking. Zero runtime dependencies.
 集中度先做一次重算，这是这一维度最关键的口径：
 
 - **剔除池子地址**：它持有的是 AMM 储备，不是某个人的筹码。
+- **剔除池子储备账户**：Solana 上前排名单给的是代币账户地址，池子的储备账户 `owner`
+  才是池子本身。两个字段都要比对——只比地址永远匹配不上，会把一个刚开盘的池子里
+  76% 的储备当成巨鲸，直接误判致命。
 - **剔除黑洞与销毁地址**：永久不可流通。
 - **剔除已锁仓地址**：短期砸不出来。
 
-不剔除这三类，前十大占比会系统性虚高，大量正常标的会被直接判死。可用前排名单不足 5 个时
-退回接口原始值，并在报告里标注口径。
+池子地址不只取 DexScreener 给出的那一个最活跃交易对，还会并入 RugCheck 报告里
+`markets[].pubkey` 的全部市场地址——一个代币往往有几十上百个市场，前排储备落在哪个市场
+是不确定的，只认一个池子会漏。
+
+不剔除这些，前十大占比会系统性虚高，大量正常标的会被直接判死。可用前排名单不足 5 个时
+退回接口原始值，并在报告里标注口径；剔除了哪几个地址、各占多少，都会写在报告里供复核。
 
 风险不是单看集中度，而是「集中度 × 退出通道宽窄」：
 
@@ -229,6 +236,11 @@ tracking. Zero runtime dependencies.
 不是 DEX 池子，池子深度对它没有约束力。只有「集中度高」且「持有人少、池子是唯一出口」
 同时成立，才是真正能被一次性砸穿的结构。PEPE、BONK 这类标的的实测结论就是「老资格但
 不值得重仓」，而不是「筹码致命」。
+
+剔除口径本身就是校准的一部分：某 Solana 新池的池子储备账户持有 76.72% 供应量，
+按原始前十大算是 89.31%、持币 952 个，会被判成致命；按 `owner` 把储备剔掉后
+前十大只剩 14.51%，该标的的正确结论是「小仓试错」。这类误判正是筹码维度要先重算
+集中度的原因。
 
 致命项（判为筹码致命，结论直接放弃）：前十大持有 60% 以上且通道不宽；前十大持有 45%
 以上且通道狭窄；通道狭窄且前十大抛压是池子深度的 5 倍以上；DEV 自留 10% 以上；
@@ -283,7 +295,7 @@ tracking. Zero runtime dependencies.
 | --- | --- | --- |
 | GoPlus | EVM 与 Solana 合约安全标志、持有人分布 | 免费档一次只受理一个地址，不支持 comma 批量 |
 | honeypot.is | EVM 真实买卖模拟，比静态标志更接近真机 | 只覆盖部分 EVM 链 |
-| RugCheck | Solana 风险报告，含发行方、insider 网络、逐市场 LP 锁定率 | 全量报告单币可达数 MB |
+| RugCheck | Solana 风险报告，含发行方、insider 网络、逐市场 LP 锁定率与池子地址清单 | 全量报告单币可达数 MB |
 | DexScreener 同名检索 | 仿盘识别（同符号但小几个数量级的新盘） | 仅按符号检索 |
 
 因为 GoPlus 免费档不能批量，体检不能对全池逐轮调用，只能按需触发并长缓存：普通结果缓存
@@ -342,10 +354,16 @@ npm run serve:static     # 起一个只读静态服务，默认 8080
 ### 5.3 分开跑测试
 
 ```bash
-npm test                 # 零依赖单测（打分模型 + 浏览器端引擎），不需要网络
+npm test                 # 零依赖单测（打分模型 + 四维体检 + 浏览器端引擎），不需要网络
+npm run test:checkup     # 只跑四维体检模型单测
 npm run test:frontend    # 前端冒烟，需要先在 127.0.0.1:8791 起服务
 node test/static.smoke.js  # 静态站冒烟，需要 jsdom
+npm run test:live        # 线上产物验证，需要联网与 jsdom，交付前跑
 ```
+
+`npm run test:live` 会把线上实际发布的那份文件下载下来，用真实网络跑一遍扫描与四维体检。
+默认指向 GitHub Pages 地址，可用 `DR_LIVE_BASE` 指定自定义域名。它依赖外网与第三方接口，
+不适合放进 CI。
 
 ## 六、日常使用说明
 
@@ -399,7 +417,8 @@ dragon-radar/
 │   ├── checkup.test.js    四维体检模型单测（零依赖）
 │   ├── engine.test.js     浏览器端引擎 + 适配层集成测试（零依赖）
 │   ├── frontend.smoke.js  服务形态前端冒烟（需服务在跑 + jsdom）
-│   └── static.smoke.js    静态站冒烟（需 jsdom）
+│   ├── static.smoke.js    静态站冒烟（需 jsdom）
+│   └── live.verify.js     线上产物验证（需联网 + jsdom）
 ├── cname.example          自定义域名配置示例与 DNS 记录说明
 ├── LICENSE                MIT
 └── package.json
@@ -445,6 +464,7 @@ dragon-radar/
 | `test/engine.test.js` | 引擎与适配层集成测试 |
 | `test/frontend.smoke.js` | 服务形态前端冒烟测试 |
 | `test/static.smoke.js` | 静态站冒烟测试 |
+| `test/live.verify.js` | 线上产物验证（联网） |
 
 ## 九、接口一览
 
@@ -476,11 +496,14 @@ npm test
 
 - `test/score.test.js`：12 项通过。覆盖分级映射连续性、分数恒为 0 至 100 的整数且无 NaN、
   深度与市值比单调性、未成熟窗口不影响风险判定等。
-- `test/checkup.test.js`：44 项通过。覆盖四维体检模型：安全硬红线与「所有权已放弃则
+- `test/checkup.test.js`：49 项通过。覆盖四维体检模型：安全硬红线与「所有权已放弃则
   owner 类风险降级」的对照、仿盘与「自己就是龙头」的区分、缺失合约数据按最高风险处理；
   五个传播阶段的判定与持币地址增量的方向性；集中度剔除池子与销毁地址前后的差异、
-  「人少且池子是唯一出口」判死与「大市值高集中」不判死的对照；仓位取三者最小值、
-  止损距离随阶段变化、阶段系数与致命项归零；以及任意夹具组合下不产生 NaN 或越界值。
+  Solana 池子储备账户（地址不是池子但 owner 是池子）的剔除、真实巨鲸不得被误剔的
+  反向护栏、「人少且池子是唯一出口」判死与「大市值高集中」不判死的对照；仓位取三者
+  最小值、止损距离随阶段变化、阶段系数与致命项归零；缺数据时数值字段必须显式置空
+  （不能留成 undefined，那会被渲染成「前十大 undefined%」这种像结论的东西）；
+  以及任意夹具组合下不产生 NaN 或越界值。
 - `test/engine.test.js`：76 项通过。在进程内伪造 `self` / `localStorage` / `fetch`，
   加载真实的 `lib/` 与 `src/`，跑完整链路：建候选池、取行情、打分、落盘、
   第二轮用真实区间增量重算量能、榜单筛选、自选豁免质量地板、适配层全部端点。
@@ -488,16 +511,22 @@ npm test
 
 另外两个冒烟测试（需要 `jsdom`）：
 
-- `npm run test:frontend`：37 项通过。先用 `npm start` 起服务，再用 jsdom 跑真实
+- `npm run test:frontend`：40 项通过。先用 `npm start` 起服务，再用 jsdom 跑真实
   `public/app.js`，断言卡片、龙虎榜、筛选、追踪页、模型页都真的渲染出来了。
   **注意**：端口 8791 的请求不要走系统代理。若本机设有 `http_proxy` / `https_proxy`，
   请先清掉或把 `127.0.0.1` 加进 `no_proxy`，否则 Node 会把回环请求发给代理，
   报 `ECONNREFUSED`（详见 Q13 第 4 条与注意事项）。
-- `node test/static.smoke.js`：55 项通过。直接用 `docs/` 里构建出来的那一整套脚本，
+- `node test/static.smoke.js`：93 项通过。直接用 `docs/` 里构建出来的那一整套脚本，
   不需要后端、不需要网络，断言「真正会部署上去的那份产物」能自己扫描、自己算分、
-  自己渲染，并覆盖链筛选、搜索、行展开、手动刷新等交互。
+  自己渲染，并覆盖链筛选、搜索、行展开、手动刷新、四维体检（含 Solana 池子储备剔除）、
+  面板跨轮重绘保持展开，以及风控源未收录该合约时的缺数据渲染（不出现 undefined，
+  不把缺数据假报成「常态」）等交互。
+- `npm run test:live`：14 项通过（随线上标的略有浮动）。把线上实际发布的那份文件下载到
+  临时目录，用真实网络跑一遍：断言线上版本能完成首轮扫描、渲染卡片、并对首个标的跑通
+  四维体检、给出结论与仓位、交代集中度重算口径。验的是「用户浏览器实际拿到的东西」，
+  依赖外网与第三方接口，只作为交付前的线上核对，不进 CI。
 
-`test/static.smoke.js` 与 `test/frontend.smoke.js` 都需要 `jsdom`。安装方式：
+`test/static.smoke.js`、`test/frontend.smoke.js` 与 `test/live.verify.js` 都需要 `jsdom`。安装方式：
 
 ```bash
 npm i -D jsdom
@@ -594,7 +623,7 @@ git commit -m "feat: 抓龙雷达首次开源发布
 - 两种运行形态共用同一份打分口径与前端代码
 - 本地服务形态：Node 编排 + /api/* + 快照落盘
 - 纯静态形态：浏览器端引擎，可直接部署到 GitHub Pages
-- 测试：打分单测 12 项、体检单测 44 项、引擎集成 76 项、静态站冒烟 83 项"
+- 测试：打分单测 12 项、体检单测 49 项、引擎集成 76 项、静态站冒烟 93 项"
 git branch -M main
 git remote add origin https://github.com/kfat77/dragon-radar.git
 git push -u origin main
@@ -994,12 +1023,22 @@ at 30, so it cannot falsely report "neutral".
 Concentration is recomputed first, which is the single most important detail here:
 
 - **Exclude the pool address**: it holds AMM reserves, not someone's position.
+- **Exclude pool reserve accounts**: on Solana the top-holder list gives token account
+  addresses, and the reserve account's `owner` is the pool itself. Both fields must be
+  compared; matching the address alone never fires and turns a 76% reserve balance in a
+  freshly opened pool into a whale, producing a false fatal verdict.
 - **Exclude burn and dead addresses**: permanently non-circulating.
 - **Exclude locked addresses**: they cannot dump short term.
 
+Pool addresses are not limited to the single most active pair reported by DexScreener: every
+market address in `markets[].pubkey` from the RugCheck report is merged in. A token often has
+dozens or hundreds of markets and it is not predictable which one holds the top reserve, so
+recognising only one pool would miss it.
+
 Without these exclusions top-10 concentration is systematically inflated and many healthy
 tokens get killed. When fewer than 5 usable entries remain, the raw API value is used and the
-report labels the basis.
+report labels the basis; which addresses were excluded and how much each held is always
+written into the report so the conclusion can be audited.
 
 Risk is not concentration alone, but concentration times how narrow the exit is:
 
@@ -1014,6 +1053,12 @@ CEX order books rather than the DEX pool, so pool depth does not constrain them.
 high concentration and few holders with the pool as the sole exit coincide is the structure
 genuinely breakable in one go. Measured on live data, tokens such as PEPE and BONK come out as
 "established but not worth a large stake" rather than "fatal chips".
+
+The exclusion rule is itself part of that calibration: the pool reserve account of one freshly
+opened Solana pool held 76.72% of supply, which a raw top-10 reading turns into 89.31% with 952
+holders and a fatal verdict. Excluding it by `owner` leaves a top-10 of 14.51%, and the correct
+verdict for that token is "small probe position". Recomputing concentration before judging is
+what prevents exactly this class of error.
 
 Fatal findings (verdict becomes pass): top-10 above 60% with a non-wide channel; top-10 above
 45% with a narrow channel; narrow channel with top-10 dump pressure at 5x pool depth or more;
@@ -1071,7 +1116,7 @@ change, chip change, narrative change), written down before entry.
 | --- | --- | --- |
 | GoPlus | EVM and Solana contract safety flags, holder distribution | The free tier accepts one address per request, no comma batching |
 | honeypot.is | Real buy and sell simulation on EVM, closer to live behaviour than static flags | Only covers some EVM chains |
-| RugCheck | Solana risk report with issuer, insider network and per-market LP lock rate | A full report can exceed several MB per token |
+| RugCheck | Solana risk report with issuer, insider network, per-market LP lock rate and pool address list | A full report can exceed several MB per token |
 | DexScreener symbol search | Copycat detection (same symbol but orders of magnitude smaller) | Symbol search only |
 
 Because the GoPlus free tier cannot batch, checkups are never run across the whole pool every
@@ -1137,10 +1182,17 @@ does the scanning itself.
 ### 5.3 Running tests separately
 
 ```bash
-npm test                    # zero-dependency unit tests, no network needed
+npm test                    # zero-dependency unit tests (score model + checkup + browser engine)
+npm run test:checkup        # checkup model unit tests only
 npm run test:frontend       # frontend smoke test, needs a server on 127.0.0.1:8791
 node test/static.smoke.js   # static site smoke test, needs jsdom
+npm run test:live           # live artifact verification, needs network and jsdom, run before delivery
 ```
+
+`npm run test:live` downloads the files actually published on the live site and runs a real
+scan plus a real checkup over the network. It points at the GitHub Pages address by default and
+accepts `DR_LIVE_BASE` for a custom domain. It depends on the internet and third-party APIs, so
+it is not meant for CI.
 
 ## 6. Daily Usage
 
@@ -1196,7 +1248,8 @@ dragon-radar/
 │   ├── checkup.test.js    Checkup model unit tests (zero dependency)
 │   ├── engine.test.js     Engine plus adapter integration tests (zero dependency)
 │   ├── frontend.smoke.js  Frontend smoke test for server mode (needs a running server and jsdom)
-│   └── static.smoke.js    Static site smoke test (needs jsdom)
+│   ├── static.smoke.js    Static site smoke test (needs jsdom)
+│   └── live.verify.js     Live artifact verification (needs network and jsdom)
 ├── cname.example          Custom domain example with DNS records
 ├── LICENSE                MIT
 └── package.json
@@ -1243,6 +1296,7 @@ re-run `npm run build:static`.
 | `test/engine.test.js` | Engine and adapter integration tests |
 | `test/frontend.smoke.js` | Frontend smoke test for server mode |
 | `test/static.smoke.js` | Static site smoke test |
+| `test/live.verify.js` | Live artifact verification (network) |
 
 ## 9. API Reference
 
@@ -1277,22 +1331,25 @@ Results measured on the development machine:
 - `test/score.test.js`: 12 assertions pass. Covers grade band continuity, scores always
   being integers from 0 to 100 with no NaN, depth to market cap monotonicity, and immature
   windows not affecting the risk decision.
-- `test/checkup.test.js`: 44 assertions pass. Covers the checkup model: safety hard red lines
+- `test/checkup.test.js`: 49 assertions pass. Covers the checkup model: safety hard red lines
   and the contrast with "ownership renounced so owner-gated risks are downgraded", copycat
   detection versus "this is the leader itself", and missing contract data being treated as
   maximum risk; all five propagation stages plus the directional regression on holder growth;
-  concentration recomputation before and after excluding pool and burn addresses, and the
-  contrast between "few holders with the pool as the only exit" (fatal) and "large cap with
-  high concentration" (not fatal); position sizing taking the minimum of three caps, stop
-  distance varying by stage, stage multipliers, and fatal findings forcing size to zero; plus
-  no NaN or out-of-range output across arbitrary fixture combinations.
+  concentration recomputation before and after excluding pool and burn addresses, exclusion of
+  Solana pool reserve accounts (address is not the pool but `owner` is), an inverse guard so a
+  genuine whale is never mistakenly excluded, and the contrast between "few holders with the
+  pool as the only exit" (fatal) and "large cap with high concentration" (not fatal); position
+  sizing taking the minimum of three caps, stop distance varying by stage, stage multipliers,
+  and fatal findings forcing size to zero; numeric fields being explicitly null rather than
+  undefined when data is missing (an undefined would render as "top-10 undefined%", which reads
+  like a conclusion); plus no NaN or out-of-range output across arbitrary fixture combinations.
 - `test/engine.test.js`: 76 assertions pass. Fakes `self`, `localStorage` and `fetch` in
   process, loads the real `lib/` and `src/`, and runs the whole pipeline: universe building,
   quote fetching, scoring, persistence, a second round recomputing volume from a real
   interval delta, board filtering, watchlist exemption from the quality floor, and every
   adapter endpoint. No network needed.
 
-Two smoke tests require `jsdom`:
+Two smoke tests and one live check require `jsdom`:
 
 - `npm run test:frontend`: 40 assertions pass. Start the server with `npm start`, then run
   the real `public/app.js` under jsdom and assert that cards, the table, filters, the
@@ -1301,13 +1358,22 @@ Two smoke tests require `jsdom`:
   `https_proxy` is set on the machine, clear it or add `127.0.0.1` to `no_proxy`, otherwise
   Node sends the loopback request to the proxy and fails with `ECONNREFUSED` (see Q13 item 4
   and the Caveats section).
-- `node test/static.smoke.js`: 83 assertions pass. Runs the exact set of scripts built into
+- `node test/static.smoke.js`: 93 assertions pass. Runs the exact set of scripts built into
   `docs/`, with no backend, and asserts that the artifact that actually ships can scan, score
   and render by itself. It also covers chain filtering, search, row expansion, manual refresh,
   and the full checkup path against stubbed GoPlus / honeypot.is / RugCheck responses on both
-  an EVM and a Solana token, including RugCheck backfilling the holder data GoPlus omits.
+  an EVM and a Solana token, including RugCheck backfilling the holder data GoPlus omits and
+  Solana pool reserves being excluded from concentration by their `owner`. It also covers the
+  missing-data path when the risk source has no record of the contract: no `undefined` may
+  appear in the panel and a missing feed may not be reported as a neutral stage.
+- `npm run test:live`: 14 assertions pass (varies slightly with the live universe). Downloads
+  the files actually published on the live site, then over the real network asserts that the
+  deployed build completes its first scan, renders cards, and runs a full checkup on the first
+  token, producing a verdict, a position size and an explicit concentration basis. It verifies
+  what the user's browser literally receives; because it depends on the internet and
+  third-party APIs it is a pre-delivery check rather than a CI job.
 
-Both smoke tests need `jsdom`:
+All three need `jsdom`:
 
 ```bash
 npm i -D jsdom
