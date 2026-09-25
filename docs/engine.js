@@ -62,6 +62,7 @@
       scanCount: state.scanCount,
       meta: state.meta,
       sources: state.sources,
+      checkupPrev: checkupPrev,
     };
     try {
       localStorage.setItem(KEY, JSON.stringify(payload));
@@ -90,6 +91,7 @@
       state.scanCount = j.scanCount || 0;
       state.lastScanAt = j.lastScanAt || 0;
       state.lastScanMs = j.lastScanMs || 0;
+      checkupPrev = j.checkupPrev && typeof j.checkupPrev === 'object' ? j.checkupPrev : {};
       state.tokens = (Array.isArray(j.tokens) ? j.tokens : []).map(function (t) {
         t.history = state.history[t.key] || [];
         return t;
@@ -381,6 +383,74 @@
     };
   }
 
+  // ------------------------------------------------------------- 四维体检
+  // 体检要调外部风控接口，而 GoPlus 免费档一次只返回一个地址（实测不支持批量），
+  // 对全池逐轮调用必然触发限流。因此走「按需触发 + 长缓存」：用户展开某个标的时
+  // 才跑一次，结果在 lib/security.js 里缓存 6 小时，这里再加一层进程内记忆。
+  var checkupCache = {};
+  var checkupPrev = {};      // key -> { holderCount, at }，供叙事维度算持币地址增量
+  var checking = {};
+
+  async function runCheckupFor(chainId, addr, opts) {
+    opts = opts || {};
+    var k = keyOf(chainId, addr);
+    if (checkupCache[k] && !opts.force) return checkupCache[k];
+    if (checking[k]) return checking[k];
+    if (!root.DragonSecurity || !root.DragonCheckup) {
+      return { ok: false, error: '未加载安全数据层或体检模型（lib/security.js、lib/checkup.js）' };
+    }
+    var tok = state.tokens.filter(function (x) { return x.key === k; })[0] || null;
+    var marketOffline = false;
+    checking[k] = (async function () {
+      try {
+        // 标的可能不在本轮候选池里（用户直接给合约地址）。叙事与位置两个维度都依赖
+        // 成交流水、市值与池子深度，缺了它们会退化成噪声，所以先补一次单币行情。
+        if (!tok) {
+          try {
+            var pair = await S.dexToken(addr);
+            if (pair) {
+              var cur = S.normalizePair(pair, {});
+              var scored = SC.scoreToken(cur, null, Date.now());
+              tok = Object.assign({ key: k, history: [] }, cur, scored);
+              marketOffline = true;
+            }
+          } catch (e) { /* 拉不到就退化为只有合约数据的体检，由模型自行降级 */ }
+        }
+        var sec = await root.DragonSecurity.fetchSecurity({
+          chainId: chainId,
+          tokenAddress: addr,
+          symbol: tok && tok.symbol,
+          fdv: tok && tok.fdv,
+          pairAddress: tok && tok.pairAddress,
+        }, { deep: true, log: opts.log });
+        var report = root.DragonCheckup.runCheckup(
+          tok || { chainId: chainId, tokenAddress: addr },
+          sec, checkupPrev[k] || null, opts.profile
+        );
+        report.secSources = sec.sources;
+        report.secGaps = sec.gaps;
+        report.copycat = sec.copycat || null;
+        report.rug = sec.rug || null;
+        report.cached = !!sec.cached;
+        report.marketOffline = marketOffline;
+        report.marketMissing = !tok;
+        checkupCache[k] = report;
+        var hc = report.chips && report.chips.holderCount;
+        if (hc > 0) checkupPrev[k] = { holderCount: hc, at: Date.now() };
+        save();
+        emit();
+        return report;
+      } catch (e) {
+        return { ok: false, error: String((e && e.message) || e) };
+      } finally {
+        delete checking[k];
+      }
+    })();
+    return checking[k];
+  }
+
+  function clearCheckups() { checkupCache = {}; checkupPrev = {}; save(); }
+
   var timer = null;
   function start() {
     load();
@@ -404,5 +474,9 @@
     removeWatch: removeWatch,
     watchlist: function () { return state.watchlist; },
     health: health,
+    checkup: runCheckupFor,
+    clearCheckups: clearCheckups,
+    checkupPrev: function () { return checkupPrev; },
+    checkups: function () { return checkupCache; },
   };
 })(typeof self !== 'undefined' ? self : this);

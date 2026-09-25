@@ -363,6 +363,75 @@ button,input,select{font-family:inherit}
   background:#f2f5ee;font-size:12.5px;font-weight:750;color:#3f5636;
 }
 
+/* ---------- 四维体检（安全 / 叙事 / 筹码 / 位置） ---------- */
+/* 体检要调外部风控接口，按需触发。面板默认收起，展开后是四个维度的证据与结论。 */
+.radar-cu-badge{
+  display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;
+  font-size:11px;font-weight:800;white-space:nowrap;
+}
+.radar-cu-badge.is-loading{background:#f2f5ee;color:var(--ink-label)}
+.radar-cu-badge.is-pass{background:var(--mint);color:#2f5c10}
+.radar-cu-badge.is-review{background:var(--orange);color:#7a4a10}
+.radar-cu-badge.is-veto{background:#fbe0d9;color:#a3381f}
+.radar-cu-badge.is-unknown{background:#f2f5ee;color:#6f7d67}
+
+.radar-checkup{
+  margin:14px 0 0;padding:16px 16px 14px;border:1px solid var(--line);border-left:4px solid var(--v-unknown);
+  border-radius:18px;background:var(--cream);
+}
+.radar-checkup.is-pass{border-left-color:var(--v-pass)}
+.radar-checkup.is-review{border-left-color:var(--v-review)}
+.radar-checkup.is-veto{border-left-color:var(--v-veto)}
+.radar-checkup-head{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:10px}
+.radar-checkup-head h4{margin:0;font-size:14px;font-weight:800;letter-spacing:-.02em;color:var(--ink-deep)}
+.radar-checkup-head .radar-cu-score{
+  margin-left:auto;font-size:11.5px;font-weight:800;color:var(--ink-label);font-variant-numeric:tabular-nums;
+}
+.radar-cu-summary{margin:0 0 12px;color:var(--ink-soft);font-size:12.5px;line-height:1.72}
+.radar-cu-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(228px,1fr));gap:12px}
+.radar-cu-dim{
+  padding:12px 13px;border-radius:14px;background:#fff;border:1px solid var(--line);
+}
+.radar-cu-dim.is-block{border-color:#e7b8a9;background:#fff7f4}
+.radar-cu-dim.is-warn{border-color:#f0dcbb;background:#fffbf3}
+.radar-cu-dim h5{
+  margin:0 0 8px;font-size:12px;font-weight:800;color:#588145;display:flex;align-items:center;gap:8px;
+}
+.radar-cu-dim h5 em{
+  margin-left:auto;font-style:normal;font-size:11px;font-weight:800;color:var(--ink-label);
+  font-variant-numeric:tabular-nums;
+}
+.radar-cu-line{margin:5px 0 0;color:var(--ink-soft);font-size:11.5px;line-height:1.68}
+.radar-cu-line b{color:var(--ink-deep);font-weight:750}
+.radar-cu-line.is-bad{color:#a3381f}
+.radar-cu-line.is-bad b{color:#a3381f}
+.radar-cu-line.is-ok{color:#2f5c10}
+.radar-cu-list{margin:8px 0 0;padding:0 0 0 16px;color:var(--ink-soft);font-size:11.5px;line-height:1.75}
+.radar-cu-list li::marker{color:#9dc47f}
+.radar-cu-list li.is-bad::marker{color:#cf6a52}
+.radar-cu-tags{display:flex;flex-wrap:wrap;gap:5px;margin:9px 0 0}
+.radar-cu-tags span{padding:3px 9px;border-radius:999px;background:#f2f5ee;color:#5c6f52;font-size:10.5px;font-weight:750}
+.radar-cu-tags span.is-ok{background:var(--mint);color:#2f5c10}
+.radar-cu-tags span.is-bad{background:#fbe0d9;color:#a3381f}
+.radar-cu-pos{
+  margin:12px 0 0;padding:12px 13px;border-radius:14px;background:#fff;border:1px solid var(--line);
+}
+.radar-cu-pos h5{margin:0 0 8px;font-size:12px;font-weight:800;color:#588145}
+.radar-cu-pos .radar-cu-size{
+  font-size:19px;font-weight:800;letter-spacing:-.04em;color:var(--ink-deep);font-variant-numeric:tabular-nums;
+}
+.radar-cu-exits{margin:10px 0 0;padding:0;list-style:none;display:grid;gap:5px}
+.radar-cu-exits li{color:var(--ink-soft);font-size:11.5px;line-height:1.66}
+.radar-cu-exits b{color:var(--ink-deep);font-weight:750;margin-right:6px}
+.radar-cu-gaps{margin:10px 0 0;color:var(--ink-label);font-size:11px;line-height:1.7}
+.radar-cu-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.radar-cu-actions button{
+  padding:7px 13px;border:1px solid var(--line);border-radius:999px;background:#fff;
+  color:#3f5636;font-size:12px;font-weight:750;cursor:pointer;
+}
+.radar-cu-actions button:hover{background:var(--mint);border-color:#a3d182}
+.radar-cu-actions button[disabled]{opacity:.5;cursor:wait}
+
 /* ---------- 边界说明 ---------- */
 .radar-caveat{padding-top:44px;padding-bottom:110px}
 .radar-caveat-card{padding:34px;border-radius:var(--radius);background:var(--mint)}

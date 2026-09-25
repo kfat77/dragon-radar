@@ -84,6 +84,18 @@
       return detail ? ok(detail) : bad(404, { error: 'not found' });
     }
 
+    // 四维体检（安全 / 叙事 / 筹码 / 位置）
+    // 需要外部风控接口，GoPlus 免费档一次只受理一个地址，所以按需触发并在引擎内长缓存。
+    var cm = /^\/api\/checkup\/([^/]+)\/([^/]+)$/.exec(r.path);
+    if (cm) {
+      var cr = await E.checkup(decodeURIComponent(cm[1]), decodeURIComponent(cm[2]), {
+        force: q.force === '1',
+        profile: q.capital ? { totalCapitalUsd: Number(q.capital) } : undefined,
+      });
+      if (!cr || cr.ok === false) return bad(502, cr || { error: 'checkup failed' });
+      return ok(cr);
+    }
+
     // 单币实时报价
     if (r.path === '/api/price') {
       var addr = q.address || '';

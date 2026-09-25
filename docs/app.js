@@ -20,6 +20,9 @@ const store = {
   positions: JSON.parse(localStorage.getItem('dr.positions') || '[]'),
   watchlist: [],
   fomoToken: localStorage.getItem('dr.fomoToken') || '',
+  // 四维体检里的仓位是「估值」，必须由服务端/引擎按同一个风险预算倒推。这里只存
+  // 用户自己的总资金，默认 10000，改一次即写回本机，不发送到任何第三方。
+  capital: Number(localStorage.getItem('dr.capital') || 10000) || 10000,
   _chainSig: '',
 };
 
@@ -298,7 +301,10 @@ function cardHtml(t, i) {
       </div>
       <span class="radar-verdict is-${v.cls}">${esc(v.label)}</span>
     </div>
-    <p class="radar-verdict-note">${esc(t.name || '—')} · ${t.quoteIsUsd ? 'USD 报价' : '原生币报价'}</p>
+    <p class="radar-verdict-note">${esc(t.name || '—')} · ${t.quoteIsUsd ? 'USD 报价' : '原生币报价'}${(() => {
+      const rep = CU.cache[cuKey(t.chainId, t.tokenAddress)];
+      return rep && rep.ok !== false ? ' · ' + cuBadge(rep, null, true) : '';
+    })()}</p>
     <div class="radar-tags">${(t.tags || []).slice(0, 5).map((x) => `<span class="radar-tag${tagCls(x)}">${esc(x)}</span>`).join('')}</div>
     <canvas class="radar-spark" data-i="${i}"></canvas>
     <dl class="radar-metrics">
@@ -322,9 +328,11 @@ function cardHtml(t, i) {
     </details>
     <div class="radar-card-actions">
       <a href="${esc(t.url)}" target="_blank" rel="noreferrer">在 DexScreener 打开</a>
+      <button type="button" data-cu-btn="1" data-chain="${esc(t.chainId)}" data-addr="${esc(t.tokenAddress)}">四维体检（安全 / 叙事 / 筹码 / 位置）</button>
       <button type="button" data-copy="${esc(t.tokenAddress)}">复制合约</button>
       <button type="button" data-watch="${esc(t.tokenAddress)}" data-chain="${esc(t.chainId)}" data-sym="${esc(t.symbol)}">加入自选</button>
     </div>
+    <div class="radar-checkup" data-cu-body="${esc(t.chainId)}/${esc(t.tokenAddress)}" hidden></div>
   </article>`;
 }
 
@@ -381,6 +389,8 @@ function renderCards() {
       loadWatchlist();
     };
   });
+  cuBindButtons(box);
+  cuRestore(box);
 }
 
 function renderSkeleton() {
@@ -486,10 +496,244 @@ function toggleDetail(tr, t) {
   abox.appendChild(ul2);
   wrap.appendChild(abox);
 
+  // 四维体检：龙分只看量价结构，这里补上合约安全、筹码归属与仓位倒推
+  const cbox = el('div');
+  cbox.appendChild(el('h4', null, '四维体检（安全 / 叙事 / 筹码 / 位置）'));
+  const cbtn = el('button', 'radar-toggle', '跑一次体检');
+  cbtn.type = 'button';
+  cbtn.dataset.cuBtn = '1';
+  cbtn.dataset.chain = t.chainId;
+  cbtn.dataset.addr = t.tokenAddress;
+  cbox.appendChild(cbtn);
+  const chost = el('div', 'radar-checkup');
+  chost.dataset.cuBody = t.chainId + '/' + t.tokenAddress;
+  chost.hidden = true;
+  cbox.appendChild(chost);
+  cbox.appendChild(el('p', 'radar-note', '体检要调外部风控接口，首次约 1～3 秒，结果缓存 6 小时。仓位按你在工具条里填的总资金倒推。'));
+  wrap.appendChild(cbox);
+  cuBindButtons(wrap);
+  cuRestore(wrap);
+
   td.appendChild(wrap);
   row.appendChild(td);
   tr.after(row);
   openRow = row;
+}
+
+// ------------------------------------------------------------ 四维体检
+// 龙分回答「量价结构健不健康」，体检回答「能不能碰、筹码在谁手里、该买多少」。
+// 两件事分开：龙分是连续加权，体检里安全维度是一票否决——命中硬红线直接放弃，
+// 不参与加权，否则会出现「合约随时能跑路但量价很漂亮所以总分 82」这种荒唐结论。
+//
+// 体检要调外部风控接口（GoPlus / honeypot.is / RugCheck），GoPlus 免费档一次只受理
+// 一个地址，所以不做全池预跑：只在用户点开某个标的时跑一次，结果由接口层缓存 6 小时。
+const CU = { cache: {}, inflight: {}, open: {} };
+const CU_LEVEL = { block: '否决', critical: '致命', high: '偏高', mid: '中等', low: '低', unknown: '缺数据' };
+
+const cuKey = (chainId, addr) => chainId + ':' + String(addr).toLowerCase();
+const cuBadge = (rep, extra, slot) => {
+  const at = slot ? ' data-cu-slot="1"' : '';
+  if (!rep) return `<span class="radar-cu-badge is-loading"${at}>${esc(extra || '体检中')}</span>`;
+  const v = rep.verdict || {};
+  return `<span class="radar-cu-badge is-${v.cls || 'unknown'}"${at}>四维：${esc(v.label || '未知')}</span>`;
+};
+
+function cuChecks(list) {
+  return (list || []).map((c) => `<li class="${c.pass ? '' : 'is-bad'}">${esc(c.name)}：<b>${esc(c.detail || '')}</b></li>`).join('');
+}
+
+function cuDim(title, score, level, body) {
+  const bad = level === 'block' || level === 'critical' || level === 'high';
+  return `<div class="radar-cu-dim${bad ? ' is-block' : level === 'mid' ? ' is-warn' : ''}">
+    <h5>${esc(title)}<em>${score == null ? '' : score + ' 分 · '}${esc(CU_LEVEL[level] || level || '')}</em></h5>
+    ${body}
+  </div>`;
+}
+
+function cuHtml(rep, chainId, addr) {
+  const v = rep.verdict || {};
+  const s = rep.safety || {}, n = rep.narrative || {}, c = rep.chips || {}, p = rep.position || {};
+
+  const redLine = (arr) => (arr && arr.length
+    ? `<ul class="radar-cu-list">${arr.map((x) => `<li class="is-bad">${esc(x)}</li>`).join('')}</ul>` : '');
+  const deducts = (arr) => (arr && arr.length
+    ? `<ul class="radar-cu-list">${arr.map((x) => `<li>扣 ${x.n} 分 · ${esc(x.text)}</li>`).join('')}</ul>` : '');
+  const paras = (arr) => (arr || []).map((x) => `<p class="radar-cu-line">${esc(x)}</p>`).join('');
+
+  // ---- 安全：先摆硬红线，再摆扣分项，最后才是核对清单
+  const sBody = [
+    redLine(s.hard),
+    deducts(s.warn),
+    `<ul class="radar-cu-list">${cuChecks(s.checks)}</ul>`,
+    paras(s.notes),
+  ].join('');
+
+  // ---- 叙事：给的是传播载体与强度，故事内容必须人工判断
+  const nBody = [
+    `<p class="radar-cu-line">传播阶段 <b>${esc(n.stageLabel || '—')}</b>${n.divergence ? ' · <b class="is-bad">量价背离</b>' : ''}</p>`,
+    `<div class="radar-cu-tags">${(n.bearers || []).length
+      ? n.bearers.map((b) => `<span class="is-ok">${esc(b)}</span>`).join('')
+      : '<span class="is-bad">无任何传播载体</span>'}</div>`,
+    `<p class="radar-cu-line">近 1 小时成交笔数相当于日均 <b>${n.txnShare}</b> 倍，瞬时加速度 <b>${n.txnBurst}</b> 倍，24 小时价格 <b>${n.priceRun}%</b>${n.holderGrowthPct == null ? '' : '，持币地址较上次体检 <b>' + (n.holderGrowthPct >= 0 ? '+' : '') + n.holderGrowthPct + '%</b>'}</p>`,
+    `<ul class="radar-cu-list">${cuChecks(n.checks)}</ul>`,
+    paras(n.notes),
+  ].join('');
+
+  // ---- 筹码：集中度 × 退出通道宽窄。人数少且池子是唯一出口，才是致命的。
+  const cBody = [
+    redLine(c.hard),
+    `<p class="radar-cu-line">前十大 <b>${c.top10Pct}%</b>（第一名单个 ${c.top1Pct}%）· DEV / owner 自留 <b>${c.devPct}%</b> · 持币地址 <b>${c.holderCount || '未取得'}</b></p>`,
+    `<p class="radar-cu-line">前十大潜在抛压 <b>${usd(c.dumpUsd)}</b>，等于池子深度的 <b>${c.dumpRatio} 倍</b></p>`,
+    `<p class="radar-cu-line">退出通道：<b>${esc(c.channelLabel || '—')}</b> · LP 锁定 ${c.lpLockedPct}%${c.insiderPct == null ? '' : ' · 关联地址持仓 ' + c.insiderPct + '%'}</p>`,
+    `<p class="radar-cu-line">集中度口径：${esc(c.concSource || '')}</p>`,
+    `<ul class="radar-cu-list">${cuChecks(c.checks)}</ul>`,
+    deducts(c.warn),
+    paras(c.notes),
+  ].join('');
+
+  // ---- 位置：仓位由风险预算倒推，不由感觉决定
+  const pBody = [
+    `<p class="radar-cu-line">市值分档 <b>${esc(p.mcapBandLabel || '—')}</b> · 本阶段止损距离 <b>${p.stopPct}%</b></p>`,
+    `<p class="radar-cu-size">建议仓位 ${usd(p.sizeUsd)} <span style="font-size:12px;font-weight:700;color:var(--ink-label)">＝ 总资金 ${usd(p.totalCapitalUsd)} 的 ${p.sizePctOfCapital}%，池子深度的 ${p.sizePctOfLiquidity}%</span></p>`,
+    `<p class="radar-cu-line">单笔可承受亏损 <b>${usd(p.riskBudgetUsd)}</b>；倒推上限：风险预算 ${usd(p.riskSizeUsd)} / 流动性上限 ${usd(p.liquidityCapUsd)} / 单币上限 ${usd(p.singleCapUsd)}，实际受限于 <b>${esc(p.sizeCapBy || '—')}</b>，再乘质量系数 ${p.qualityFactor} 与阶段系数 ${p.tierMult}</p>`,
+    (p.scales || []).length
+      ? `<ul class="radar-cu-list">${p.scales.map((x) => `<li>${esc(x.label)} ${x.pct}%（${usd(x.usd)}）：${esc(x.when)}</li>`).join('')}</ul>` : '',
+    `<ul class="radar-cu-list">${cuChecks(p.checks)}</ul>`,
+    paras(p.notes),
+    `<ul class="radar-cu-exits">${(p.exits || []).map((x) => `<li><b>${esc(x.label)}</b>${esc(x.detail)}</li>`).join('')}</ul>`,
+  ].join('');
+
+  const gaps = [].concat(rep.secGaps || [], s.gaps || [], n.gaps || []);
+
+  return `<div class="radar-checkup is-${v.cls || 'unknown'}" data-cu-body="${esc(chainId)}/${esc(addr)}">
+    <div class="radar-checkup-head">
+      <h4>四维体检 · ${esc(v.label || '未知')}</h4>
+      ${v.cls ? `<span class="radar-cu-badge is-${v.cls}">${esc(v.label)}</span>` : ''}
+      <span class="radar-cu-score">综合 ${rep.composite} · 安全 ${s.score} / 筹码 ${c.score} / 叙事 ${n.score}</span>
+    </div>
+    <p class="radar-cu-summary">${esc(rep.summary || '')}</p>
+    <div class="radar-cu-grid">
+      ${cuDim('安全 · 合约能不能碰', s.score, s.level, sBody)}
+      ${cuDim('叙事 · 故事还传不传得动', n.score, n.stage === 'ebb' ? 'high' : 'low', nBody)}
+      ${cuDim('筹码 · 在谁手里', c.score, c.level, cBody)}
+    </div>
+    <div class="radar-cu-pos">
+      <h5>位置 · 该不该进、该进多少</h5>
+      ${pBody}
+    </div>
+    ${gaps.length ? `<p class="radar-cu-gaps">数据缺口与口径说明：${esc(gaps.join('；'))}</p>` : ''}
+    ${rep.marketMissing ? '<p class="radar-cu-gaps is-bad">未取到行情数据（DexScreener 未收录该合约或接口异常）。叙事与位置两个维度已按缺数据降级，不要按这里的数字建仓。</p>' : ''}
+    ${!rep.marketMissing && rep.marketOffline ? '<p class="radar-cu-gaps">该标的不在本轮候选池内，行情取自单币实时查询（非候选池快照）。</p>' : ''}
+    <p class="radar-cu-gaps">数据来源：${esc((rep.secSources || []).join(' / ') || '—')} · 取数时间 ${esc(ago(rep.at))}${rep.cached ? ' · 命中缓存' : ''}。仪表仅整理公开数据，不构成投资建议。</p>
+    <div class="radar-cu-actions">
+      <button type="button" data-cu-refresh="${esc(chainId)}/${esc(addr)}">重跑体检</button>
+    </div>
+  </div>`;
+}
+
+function cuSkeleton(chainId, addr) {
+  return `<div class="radar-checkup" data-cu-body="${esc(chainId)}/${esc(addr)}">
+    <div class="radar-checkup-head"><h4>四维体检</h4>${cuBadge(null, '正在调外部风控接口')}</div>
+    <p class="radar-cu-summary">正在拉取合约安全标志、持有人分布与同名仿盘对照。GoPlus 免费档一次只受理一个地址，首次约 1～3 秒。</p>
+    <div class="radar-cu-grid">${Array.from({ length: 3 }, () => '<div class="radar-skeleton"><i class="w60"></i><i class="w80"></i><i class="w40"></i></div>').join('')}</div>
+  </div>`;
+}
+
+async function cuLoad(chainId, addr, opts = {}) {
+  const k = cuKey(chainId, addr);
+  // 总资金必须每次都传：仓位是服务端/引擎按这个口径倒推的，不能靠默认值兜底
+  const cap = Number(store.capital) > 0 ? Number(store.capital) : 0;
+  const url = `/api/checkup/${encodeURIComponent(chainId)}/${encodeURIComponent(addr)}`
+    + '?capital=' + cap + (opts.force ? '&force=1' : '');
+  const r = await api(url);
+  if (!r.ok || !r.body || r.body.ok === false) {
+    CU.cache[k] = { ok: false, error: (r.body && r.body.error) || ('接口返回 ' + r.status) };
+  } else {
+    CU.cache[k] = r.body;
+  }
+  return CU.cache[k];
+}
+
+// 把体检结果填进页面上的承载位。卡片与龙虎榜展开行共用这一套 DOM 结构。
+function cuPaint(host, chainId, addr) {
+  if (!host) return;
+  const k = cuKey(chainId, addr);
+  const rep = CU.cache[k];
+  if (!rep) { host.innerHTML = cuSkeleton(chainId, addr); return; }
+  if (rep.ok === false) {
+    host.innerHTML = `<div class="radar-checkup is-veto">
+      <div class="radar-checkup-head"><h4>四维体检</h4><span class="radar-cu-badge is-veto">取数失败</span></div>
+      <p class="radar-cu-summary">${esc(rep.error)}</p>
+      <p class="radar-cu-gaps">缺数据不等于安全。拿不到合约数据时本工具不给通过结论。</p>
+      <div class="radar-cu-actions"><button type="button" data-cu-refresh="${esc(chainId)}/${esc(addr)}">重试</button></div>
+    </div>`;
+  } else {
+    host.innerHTML = cuHtml(rep, chainId, addr);
+  }
+  host.hidden = false;
+  // 卡片头部同步挂上结论徽标：面板收起后也能一眼看到结论
+  const card = (host.closest && host.closest('.radar-card')) || null;
+  if (card && rep && rep.ok !== false) {
+    const slot = card.querySelector('.radar-cu-badge[data-cu-slot]');
+    if (slot) slot.outerHTML = cuBadge(rep, null, true);
+    else {
+      const note = card.querySelector('.radar-verdict-note');
+      if (note) note.insertAdjacentHTML('beforeend', ' · ' + cuBadge(rep, null, true));
+    }
+  }
+  const btn = host.querySelector('[data-cu-refresh]');
+  if (btn) btn.onclick = () => cuToggle(host, chainId, addr, true);
+}
+
+// 展开 / 收起 / 重跑。同一标的的并发请求共用同一个 Promise，避免重复打接口。
+async function cuToggle(host, chainId, addr, force) {
+  if (!host) return null;
+  const k = cuKey(chainId, addr);
+  const open = CU.open[k] === 1;
+  if (open && !force) { delete CU.open[k]; host.dataset.cuOpen = '0'; host.hidden = true; return null; }
+  CU.open[k] = 1;
+  host.dataset.cuOpen = '1';
+  host.hidden = false;
+  if (CU.cache[k] && !force) { cuPaint(host, chainId, addr); return CU.cache[k]; }
+
+  host.innerHTML = cuSkeleton(chainId, addr);
+  if (!CU.inflight[k]) {
+    CU.inflight[k] = cuLoad(chainId, addr, { force }).finally(() => { delete CU.inflight[k]; });
+  }
+  const rep = await CU.inflight[k];
+  cuPaint(host, chainId, addr);
+  return rep;
+}
+
+// 扫描每 15 秒重绘一次卡片，重绘会把已经展开的体检面板清掉。缓存里明明有结果，
+// 却要用户再点一次很别扭，所以重绘后按 CU.open 把打开过的面板直接从缓存还原。
+function cuRestore(root) {
+  if (!root) return;
+  root.querySelectorAll('[data-cu-body]').forEach((host) => {
+    const raw = host.dataset.cuBody || '';
+    const i = raw.indexOf('/');
+    if (i < 0) return;
+    const chainId = raw.slice(0, i);
+    const addr = raw.slice(i + 1);
+    // 承载位用的是 "chain/addr"，缓存的键是 cuKey 的小写形式，必须转一次再查
+    if (CU.open[cuKey(chainId, addr)] !== 1) return;
+    host.dataset.cuOpen = '1';
+    if (CU.cache[cuKey(chainId, addr)]) cuPaint(host, chainId, addr);
+    else { host.hidden = false; host.innerHTML = cuSkeleton(chainId, addr); }
+  });
+}
+
+// 卡片与展开行里的体检按钮
+function cuBindButtons(root) {
+  root.querySelectorAll('[data-cu-btn]').forEach((b) => {
+    if (b.dataset.cuBound === '1') return;
+    b.dataset.cuBound = '1';
+    b.onclick = () => {
+      const host = b.closest('.radar-card, .detail-inner') || root;
+      const box = host.querySelector('[data-cu-body]');
+      cuToggle(box, b.dataset.chain, b.dataset.addr, false);
+    };
+  });
 }
 
 // ------------------------------------------------------------ 模型页
@@ -734,6 +978,20 @@ function bind() {
     await refresh();
     btn.disabled = false; btn.textContent = '刷新这一轮';
   };
+
+  // 总资金只用于四维体检里的仓位倒推，存在本机，不发往任何第三方
+  const cap = $('[data-radar-capital]');
+  if (cap) {
+    cap.value = String(store.capital);
+    cap.onchange = () => {
+      const v = Number(cap.value);
+      if (!isFinite(v) || v <= 0) { cap.value = String(store.capital); return; }
+      store.capital = Math.round(v);
+      localStorage.setItem('dr.capital', String(store.capital));
+      CU.cache = {};                 // 仓位口径变了，缓存里的仓位结论不再有效
+      toast('总资金已更新为 ' + usd(store.capital) + '，下次体检按新口径倒推仓位');
+    };
+  }
 
   $('#btnFomo').onclick = () => loadFomo().catch(() => toast('拉取失败'));
   $('#btnFomoOpen').onclick = () => {

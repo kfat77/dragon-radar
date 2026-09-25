@@ -12,6 +12,8 @@ const { URL } = require('url');
 
 const S = require('./lib/sources');
 const { scoreToken, WEIGHTS, GRADES } = require('./lib/score');
+const Sec = require('./lib/security');            // 合约安全 / 筹码 / 仿盘
+const Checkup = require('./lib/checkup');         // 四维体检模型（纯函数）
 
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
@@ -38,6 +40,8 @@ const state = {
   tokens: [],               // 本轮评分结果
   meta: {},
   priceCache: {},           // tokenAddress -> {priceUsd, at, symbol, chainId}
+  checkupPrev: {},          // key -> {holderCount, at}，供叙事维度算持币地址增量
+  checkupCache: {},         // key -> 四维体检结果（外部风控接口很慢，必须长缓存）
 };
 
 const keyOf = (chainId, addr) => `${chainId}:${String(addr).toLowerCase()}`;
@@ -49,6 +53,7 @@ function loadState() {
       state.watchlist = Array.isArray(j.watchlist) ? j.watchlist : [];
       state.history = j.history && typeof j.history === 'object' ? j.history : {};
       state.snapshots = j.snapshots && typeof j.snapshots === 'object' ? j.snapshots : {};
+      state.checkupPrev = j.checkupPrev && typeof j.checkupPrev === 'object' ? j.checkupPrev : {};
     }
   } catch (e) { console.warn('[state] 读取失败：', e.message); }
   try {
@@ -66,7 +71,7 @@ function saveStateSoon() {
     saveTimer = null;
     try {
       fs.mkdirSync(DATA_DIR, { recursive: true });
-      fs.writeFileSync(STATE_FILE, JSON.stringify({ watchlist: state.watchlist, history: state.history, snapshots: state.snapshots }));
+      fs.writeFileSync(STATE_FILE, JSON.stringify({ watchlist: state.watchlist, history: state.history, snapshots: state.snapshots, checkupPrev: state.checkupPrev }));
     } catch (e) { console.warn('[state] 写入失败：', e.message); }
   }, 1500);
 }
@@ -318,6 +323,62 @@ function filterTokens(url) {
   return list.slice(0, limit);
 }
 
+// ------------------------------------------------------------------ 四维体检
+// 与 src/engine.js 的 runCheckupFor 保持同一口径：同一批 lib/*.js，同样的按需触发
+// 与缓存策略。差异只在于进程内记忆与会话内并发去重由 Node 侧独立维护。
+const checking = {};
+
+async function runCheckup(chainId, addr, opts = {}) {
+  const k = keyOf(chainId, addr);
+  if (state.checkupCache[k] && !opts.force) return state.checkupCache[k];
+  if (checking[k]) return checking[k];
+  checking[k] = (async () => {
+    try {
+      let tok = state.tokens.find((x) => x.key === k) || null;
+      // 标的可能不在本轮候选池里（用户直接给合约地址）。叙事与位置两个维度都依赖
+      // 成交流水、市值与池子深度，缺了它们会退化成噪声，所以先补一次单币行情。
+      let marketOffline = false;
+      if (!tok) {
+        try {
+          const pair = await S.dexToken(addr);
+          if (pair) {
+            const cur = S.normalizePair(pair, {});
+            tok = { key: k, history: [], ...cur, ...scoreToken(cur, null, Date.now()) };
+            marketOffline = true;
+          }
+        } catch (e) { /* 拉不到就退化为只有合约数据的体检，由模型自行降级 */ }
+      }
+      const sec = await Sec.fetchSecurity({
+        chainId,
+        tokenAddress: addr,
+        symbol: tok && tok.symbol,
+        fdv: tok && tok.fdv,
+        pairAddress: tok && tok.pairAddress,
+      }, { deep: true });
+      const report = Checkup.runCheckup(
+        tok || { chainId, tokenAddress: addr },
+        sec, state.checkupPrev[k] || null, opts.profile
+      );
+      report.secSources = sec.sources;
+      report.secGaps = sec.gaps;
+      report.copycat = sec.copycat || null;
+      report.rug = sec.rug || null;
+      report.cached = !!sec.cached;
+      report.marketOffline = marketOffline;
+      report.marketMissing = !tok;
+      state.checkupCache[k] = report;
+      const hc = report.chips && report.chips.holderCount;
+      if (hc > 0) { state.checkupPrev[k] = { holderCount: hc, at: Date.now() }; saveStateSoon(); }
+      return report;
+    } catch (e) {
+      return { ok: false, error: '上游风控接口调用失败：' + String((e && e.message) || e) };
+    } finally {
+      delete checking[k];
+    }
+  })();
+  return checking[k];
+}
+
 async function handleApi(req, res, url) {
   const p = url.pathname;
 
@@ -382,6 +443,27 @@ async function handleApi(req, res, url) {
     }
     const hist = (state.history[k] || []).slice(-120);
     return send(res, 200, { token: { ...t, historyFull: hist } });
+  }
+
+  // 四维体检（安全 / 叙事 / 筹码 / 位置）
+  // 外部风控接口（GoPlus 免费档一次只受理一个地址、RugCheck 全量报告可达数 MB）
+  // 不能逐轮全池调用：这里按需触发 + 6 小时缓存，与静态形态的引擎行为一致。
+  if (p.startsWith('/api/checkup/')) {
+    const parts = p.replace('/api/checkup/', '').split('/');
+    const chainId = decodeURIComponent(parts[0] || '');
+    const addr = decodeURIComponent(parts[1] || '');
+    if (!chainId || !addr) return send(res, 400, { error: '缺少 chainId 或代币地址' });
+    try {
+      const r = await runCheckup(chainId, addr, {
+        force: url.searchParams.get('force') === '1',
+        profile: url.searchParams.get('capital')
+          ? { totalCapitalUsd: Number(url.searchParams.get('capital')) }
+          : undefined,
+      });
+      return send(res, r.ok === false ? 502 : 200, r);
+    } catch (e) {
+      return send(res, 502, { ok: false, error: '体检失败：' + e.message });
+    }
   }
 
   if (p === '/api/price') {

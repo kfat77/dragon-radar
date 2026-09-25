@@ -123,6 +123,16 @@ window.open = () => null;
   ok('读法卡片 4 张', $$('.radar-guide-card').length === 4, String($$('.radar-guide-card').length));
   ok('权重表 8 行', $$('#modelBody tr').length >= 8, String($$('#modelBody tr').length));
   ok('分级图例已填充', $$('#gradeList span').length >= 4);
+  ok('模型页说明四维体检口径', /安全 ×0\.40 ＋ 筹码 ×0\.30 ＋ 叙事 ×0\.30/.test($('[data-panel="model"]').textContent));
+
+  // ---- 四维体检入口（Node 形态）----
+  // 真实体检要打 GoPlus / honeypot.is，属于外部依赖；这里只验证入口与承载位齐备，
+  // 接口本身的链路由 test/checkup.test.js（模型）与 test/static.smoke.js（适配层）覆盖。
+  $$('.site-nav button').find((b) => b.dataset.view === 'radar')
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 150));
+  ok('工具条含总资金输入框', !!$('[data-radar-capital]') && $('[data-radar-capital]').value === '10000');
+  ok('卡片带体检按钮与承载位', $$('.radar-card [data-cu-btn]').length > 5 && $$('.radar-card [data-cu-body]').length > 5);
 
   // ---- 回到雷达 ----
   $$('.site-nav button').find((b) => b.dataset.view === 'radar')

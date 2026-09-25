@@ -30,8 +30,9 @@
     <p class="eyebrow">01 / 抓龙雷达</p>
     <h1>新池每分钟都在出，<br />先把不能碰的划掉。</h1>
     <p class="radar-hero-copy">
-      只用公开的只读接口：DexScreener 看价量、深度、买卖笔数和池龄。页面不连接钱包、不签名、不下单，也不替你决定买什么
-      —— 它只把量价结构摊开，让「不碰」这件事变得容易。
+      只用公开的只读接口：DexScreener 看价量、深度、买卖笔数和池龄，GoPlus / honeypot.is / RugCheck 看合约安全与筹码归属。
+      页面不连接钱包、不签名、不下单，也不替你决定买什么 —— 它只把量价结构摊开，再补一份安全 / 叙事 / 筹码 / 位置的四维体检，
+      让「不碰」这件事变得容易。
     </p>
     <ul class="radar-stats" data-radar-stats>
       <li><b data-radar-scanned>—</b><span>个候选</span></li>
@@ -73,6 +74,10 @@
       </div>
       <div class="radar-actions">
         <input class="radar-search" type="search" data-radar-search placeholder="搜索符号 / 合约地址" aria-label="搜索标的" />
+        <label class="radar-input sm" style="display:flex;align-items:center;gap:6px;padding:0 12px;border:1px solid var(--line);background:#fff;font-size:12.5px;color:var(--ink-label)">
+          总资金 $
+          <input type="number" min="0" step="100" data-radar-capital aria-label="用于仓位倒推的总资金" style="width:76px;border:0;background:transparent;font:inherit;color:var(--ink-deep);font-weight:750;outline:none" />
+        </label>
         <button class="radar-toggle" type="button" data-radar-depth aria-pressed="false">只看深度≥$30K</button>
         <button class="radar-toggle is-active" type="button" data-radar-auto aria-pressed="true">自动更新：开</button>
         <button class="radar-refresh" type="button" data-radar-refresh>刷新这一轮</button>
@@ -194,6 +199,52 @@
       </div>
       <div class="radar-legend" id="gradeList"></div>
     </div>
+
+    <div class="radar-panel" style="margin-top:18px">
+      <p class="card-index">四维体检</p>
+      <p class="radar-note" style="margin-top:0">
+        龙分只回答「量价结构健不健康」，回答不了「合约能不能碰、筹码在谁手里、现在该不该进」。
+        这四个问题由体检补上：在任意卡片或龙虎榜展开行点「四维体检」按需触发，结果缓存 6 小时。
+        安全维度是一票否决——命中硬红线直接放弃，不参与加权，避免「合约随时能跑路但量价很漂亮」得出高分。
+      </p>
+      <div class="table-wrap">
+        <table class="radar-table">
+          <thead><tr><th style="width:96px">维度</th><th style="width:120px">问的问题</th><th>看什么 / 什么情况直接放弃</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><b>安全</b></td>
+              <td>合约能不能碰</td>
+              <td>蜜罐、禁止买入、不能全额卖出、买卖税超 10%、不可转让、冻结或销毁权限未放弃、创建者有蜜罐前科 —— 任一条命中直接放弃；未开源、代理合约、可增发、LP 锁定不足按扣分处理。所有者已放弃所有权时，owner 类风险实际不可触发，会降级并标注。</td>
+            </tr>
+            <tr>
+              <td><b>叙事</b></td>
+              <td>故事还传不传得动</td>
+              <td>参与广度（近 1 小时成交笔数 ÷ 日均）、瞬时加速度、传播载体（官网 / X / Telegram / Discord / 推广位 / 代币资料 / 持币地址数）、持币地址增量。阶段分萌芽期 / 传播期 / 常态 / 高潮期 / 退潮期。故事内容本身无法从公开接口获得，必须人工判断，报告里会明确写出这一点。</td>
+            </tr>
+            <tr>
+              <td><b>筹码</b></td>
+              <td>筹码在谁手里</td>
+              <td>前十大、第一名单个、DEV / owner 自留、持币地址数、前十大潜在抛压与池子深度的比值、捆绑地址网络。集中度会剔除池子储备、销毁地址与已锁仓地址后重算。风险等于集中度 × 退出通道宽窄：人数少且池子是唯一出口才致命，大市值标的前十大高不等于致命。</td>
+            </tr>
+            <tr>
+              <td><b>位置</b></td>
+              <td>该不该进、进多少</td>
+              <td>市值分档、叙事阶段、退出通道，据此给结论与仓位。仓位由风险预算倒推：单笔可承受亏损 ÷ 阶段止损距离，再取「风险预算 / 流动性上限 / 单币上限」三者最小值，乘四维质量系数与阶段系数。同时给出分批计划与四条离场条件。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="radar-legend">
+        <span>综合分 ＝ 安全 ×0.40 ＋ 筹码 ×0.30 ＋ 叙事 ×0.30</span>
+        <span>位置不参与加权，它是执行环节</span>
+        <span>缺数据不给中性分：拿不到合约数据按最高风险处理</span>
+        <span>数据源：GoPlus / honeypot.is / RugCheck / DexScreener 同名检索</span>
+      </div>
+      <p class="radar-note">
+        仓位是风险口径下的「可承受上限」，不是建议下单金额，也不代表本工具认为该买。真正要不要开仓，
+        取决于你自己的判断与承受能力。
+      </p>
+    </div>
   </section>
 
   <section class="section-wrap radar-caveat" aria-labelledby="radar-caveat-title">
@@ -204,6 +255,10 @@
         <li>只查得到接口里有的字段。DexScreener 没收录的链或代币不会出现在候选池，不等于安全，也不等于危险。</li>
         <li>候选池由「官方推广榜 + 最新代币资料 + 关键词滚动扩样 + 你的自选 + 上轮强势标的」合成，每轮覆盖 100～160 个，不是全市场。</li>
         <li>数据是每次扫描的链上快照，不是实时推送。限流或上游异常时页面会直说，不会用缓存或演示数据撑场面。</li>
+        <li>四维体检按需触发，不对全池逐轮执行：GoPlus 免费档一次只受理一个地址，RugCheck 的全量报告单币可达数 MB。结果缓存 6 小时，点击时若不是最新请重跑。</li>
+        <li>体检里的叙事维度只能给出传播载体与强度，故事讲了什么、能不能被复述与二次创作，机器读不出来，必须人工判断。报告里不会用猜测冒充结论。</li>
+        <li>筹码数据来自第三方风控接口，对「LP 由合约托管」等情形常有误记，关键标的仍建议在链上自行复核。缺数据时不判绿，也不谎称发现了问题。</li>
+        <li>仓位是风险预算倒推出来的可承受上限，不是建议下单金额。本工具不给买卖点，也不判断你会不会赚钱。</li>
         <li>不连接钱包、不需要任何密钥、不发起交易。你的地址和私钥都不会出现在这一页。</li>
         <li>「可看」的意思是「值得自己去核一遍」，不是「可以买」。真正的风险永远在合约之外。</li>
       </ul>

@@ -95,12 +95,88 @@ function pair([chain, sym, name, liq, vol, m5, h1, h6, h24], i) {
 const byAddr = {};
 SYMS.forEach((s, i) => { byAddr[s[1]] = [pair(s, i)]; });
 
+// ------------------------------------------------------------- 假风控接口
+// 四维体检要调 GoPlus / honeypot.is / RugCheck。这里造出「干净合约」的应答，
+// 目的是验证「浏览器端能不能把这三个源串起来并渲染出结论」，不是验证风控本身。
+const addrToSym = {};
+SYMS.forEach((s, i) => { addrToSym[('0x' + s[1].padEnd(38, '0') + i).toLowerCase()] = s[1]; });
+const pairOf = (sym) => 'PAIR' + sym;
+
+// EVM：GoPlus 的 percent 是 0-1 小数；holder_count 必须是字符串
+function goplusEvmPayload(a) {
+  const sym = addrToSym[a] || '';
+  return {
+    code: 1,
+    result: {
+      [a]: {
+        is_open_source: '1', is_proxy: '0', is_mintable: '0',
+        owner_address: '0x000000000000000000000000000000000000dead',
+        can_take_back_ownership: '0', owner_change_balance: '0', hidden_owner: '0',
+        selfdestruct: '0', transfer_pausable: '0', slippage_modifiable: '0',
+        trading_cooldown: '0', is_blacklisted: '0', is_anti_whale: '0',
+        is_honeypot: '0', buy_tax: '0', sell_tax: '0',
+        cannot_sell_all: '0', cannot_buy: '0', honeypot_with_same_creator: '0',
+        creator_percent: '0', owner_percent: '0',
+        holder_count: '4200', lp_holder_count: '1', is_in_cex: '0',
+        holders: [
+          // 池子储备与销毁量都必须被剔除，否则前十大占比会虚高
+          { address: pairOf(sym), percent: '0.42', is_contract: '1' },
+          { address: '0x000000000000000000000000000000000000dead', percent: '0.06' },
+          { address: '0xaaa1', percent: '0.05' },
+          { address: '0xaaa2', percent: '0.04' },
+          { address: '0xaaa3', percent: '0.03' },
+          { address: '0xaaa4', percent: '0.03' },
+          { address: '0xaaa5', percent: '0.02' },
+          { address: '0xaaa6', percent: '0.02' },
+          { address: '0xaaa7', percent: '0.02' },
+        ],
+        lp_holders: [{ address: '0xlp1', percent: '0.95', is_locked: '1' }],
+        dex: [{ id: 'uniswap' }],
+      },
+    },
+  };
+}
+
+// Solana：GoPlus 对新币不返回持有人（holder_count 缺失、holders 为空），必须由 RugCheck 补上
+function goplusSolPayload(a) {
+  return {
+    code: 1,
+    result: {
+      [a]: {
+        mintable: { status: '0' }, freezable: { status: '0' }, closable: { status: '0' },
+        metadata_mutable: { status: '0' }, balance_mutable_authority: { status: '0' },
+        transfer_hook: { status: '0' }, non_transferable: '0',
+        trusted_token: '0', creators: [{ address: 'DEVx' }],
+        holder_count: undefined, holders: [],
+      },
+    },
+  };
+}
+
+function rugcheckPayload() {
+  const th = [
+    { address: pairOf('DRGN'), pct: 40, insider: false },
+    { address: 'a1', pct: 4 }, { address: 'a2', pct: 3 }, { address: 'a3', pct: 3 },
+    { address: 'a4', pct: 2 }, { address: 'a5', pct: 2 }, { address: 'a6', pct: 2 },
+    { address: 'a7', pct: 1.5 }, { address: 'a8', pct: 1.5 }, { address: 'a9', pct: 1 },
+    { address: 'a10', pct: 1 }, { address: 'a11', pct: 0.5 },
+  ];
+  return {
+    mint: 'mint', creator: 'DEVx', creatorBalance: 0, creatorTokens: [],
+    mintAuthority: null, freezeAuthority: null, rugged: false,
+    graphInsidersDetected: 0, insiderNetworks: [], totalHolders: 5448,
+    totalLPProviders: 12, totalMarketLiquidity: 42000,
+    markets: [{ lp: { lpLockedPct: 92.5, lpLockedUSD: 38850 } }],
+    risks: [], lockers: {}, topHolders: th,
+  };
+}
+
 function response(status, body) {
   return { ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(body) };
 }
 
 const calledUrls = [];
-function fakeFetch(url) {
+function fakeFetch(url, opts) {
   const u = String(url);
   calledUrls.push(u);
   if (u.includes('/token-boosts/top/')) return Promise.resolve(response(200, boosts));
@@ -116,6 +192,29 @@ function fakeFetch(url) {
     }
     return Promise.resolve(response(200, { pairs: out }));
   }
+  // --- 风控接口
+  if (u.includes('api.gopluslabs.io/api/v1/token_security/')) {
+    const a = decodeURIComponent((u.match(/contract_addresses=([^&]+)/) || [])[1] || '').toLowerCase();
+    return Promise.resolve(response(200, goplusEvmPayload(a)));
+  }
+  if (u.includes('api.gopluslabs.io/api/v1/solana/token_security')) {
+    const a = decodeURIComponent((u.match(/contract_addresses=([^&]+)/) || [])[1] || '');
+    return Promise.resolve(response(200, goplusSolPayload(a)));
+  }
+  if (u.includes('api.honeypot.is/v2/IsHoneypot')) {
+    return Promise.resolve(response(200, {
+      token: { name: 'T', symbol: 'T' },
+      honeypotResult: { isHoneypot: false },
+      simulationResult: { buyTax: 0, sellTax: 0, transferTax: 0, simulationSuccess: true },
+      summary: { risk: 'low', riskLevel: 1 },
+      holderAnalysis: { holders: 4200, successful: 4200, failed: 0, sniperWallets: 0 },
+      flags: [],
+    }));
+  }
+  if (u.includes('api.rugcheck.xyz') && /\/report\/summary/.test(u)) {
+    return Promise.resolve(response(200, { tokenProgram: 'spl-token', risks: [], score: 1, score_normalised: 1, lpLockedPct: 92.5, tokenType: 'spl' }));
+  }
+  if (u.includes('api.rugcheck.xyz')) return Promise.resolve(response(200, rugcheckPayload()));
   return Promise.resolve(response(404, { error: 'unexpected ' + u }));
 }
 
@@ -152,7 +251,7 @@ window.HTMLCanvasElement.prototype.getContext = function () {
   });
 };
 
-const SCRIPTS = ['lib/score.js', 'lib/sources.js', 'engine.js', 'api-static.js', 'app.js'];
+const SCRIPTS = ['lib/score.js', 'lib/sources.js', 'lib/security.js', 'lib/checkup.js', 'engine.js', 'api-static.js', 'app.js'];
 
 (async function run() {
   console.log('静态站点冒烟测试（jsdom + docs/ 构建产物）');
@@ -164,6 +263,8 @@ const SCRIPTS = ['lib/score.js', 'lib/sources.js', 'engine.js', 'api-static.js',
   }
   ok('docs/lib/score.js 装载出 window.DragonScore', !!window.DragonScore);
   ok('docs/lib/sources.js 装载出 window.DragonSources', !!window.DragonSources);
+  ok('docs/lib/security.js 装载出 window.DragonSecurity', !!window.DragonSecurity);
+  ok('docs/lib/checkup.js 装载出 window.DragonCheckup', !!window.DragonCheckup);
   ok('docs/engine.js 装载出 window.DragonEngine', !!window.DragonEngine);
   ok('docs/api-static.js 装载出 window.DragonApi', !!window.DragonApi);
   ok('静态模式扫描周期为 60 秒', window.DragonEngine.SCAN_INTERVAL_MS === 60000);
@@ -279,6 +380,83 @@ const SCRIPTS = ['lib/score.js', 'lib/sources.js', 'engine.js', 'api-static.js',
   ok('权重表 8 行', $$('#modelBody tr').length >= 8, String($$('#modelBody tr').length));
   ok('分级图例已填充', $$('#gradeList span').length >= 4);
   ok('模型页含免责声明', /不构成投资建议/.test($('[data-panel="model"]').textContent + $('.radar-caveat-card').textContent));
+  ok('模型页说明四维体检口径', /综合分 ＝ 安全 ×0\.40 ＋ 筹码 ×0\.30 ＋ 叙事 ×0\.30/.test($('[data-panel="model"]').textContent));
+
+  // 11) 四维体检：点开卡片上的按钮，验证适配层 → 风控接口 → 渲染整条链路
+  $$('.site-nav button').find((b) => b.dataset.view === 'radar')
+    .dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 200));
+
+  ok('工具条含总资金输入框（仓位倒推口径）', !!$('[data-radar-capital]') && $('[data-radar-capital]').value === '10000');
+  ok('每张卡片都带体检按钮', $$('.radar-card [data-cu-btn]').length >= 8, String($$('.radar-card [data-cu-btn]').length));
+  ok('每张卡片都留了体检承载位', $$('.radar-card [data-cu-body]').length >= 8);
+  ok('体检面板默认收起', $$('.radar-card .radar-checkup').every((e) => e.hidden));
+
+  // 找一个 EVM 标的（base 链，走 GoPlus + honeypot.is）。
+  // 注意：卡片每 5 秒整体重绘一次，任何时刻缓存的 DOM 节点都可能已经被换掉，
+  // 所以断言一律按符号在当前文档里重新定位，不能拿住旧节点。
+  const cardOf = (sym) => $$('.radar-card').find((c) => {
+    const h = c.querySelector('.radar-title h3');
+    return h && h.textContent === sym;
+  });
+  const evmCard0 = $$('.radar-card').find((c) => /Base|Ethereum|BSC|BNB/.test(c.querySelector('.radar-chain').textContent));
+  ok('找到 EVM 标的用于体检', !!evmCard0);
+  const evmSym = evmCard0.querySelector('.radar-title h3').textContent;
+  evmCard0.querySelector('[data-cu-btn]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+
+  // 点击后立刻就该展开并给出加载态（cuToggle 在第一个 await 之前同步完成这一步）
+  ok('点一下立刻展开并给出加载态',
+    !evmCard0.querySelector('[data-cu-body]').hidden
+    && /正在调外部风控接口/.test(evmCard0.querySelector('[data-cu-body]').textContent),
+    evmCard0.querySelector('[data-cu-body]').textContent.slice(0, 60));
+
+  // 等风控接口回来（GoPlus → honeypot.is 之间还有 120ms 节流）。
+  // 骨架屏里也有 .radar-cu-grid，只有真结果才有 .radar-cu-dim，别等错东西。
+  const evmPanelOf = () => { const c = cardOf(evmSym); return c && c.querySelector('[data-cu-body]'); };
+  for (let i = 0; i < 120 && !(evmPanelOf() && evmPanelOf().querySelector('.radar-cu-dim')); i++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  const evmPanel = evmPanelOf();
+  ok('体检结果已渲染出四个维度容器（当前文档内）',
+    $$('.radar-card .radar-cu-dim').length >= 3, String($$('.radar-card .radar-cu-dim').length));
+  ok('体检含安全维度', /安全 · 合约能不能碰/.test(evmPanel.textContent));
+  ok('体检含叙事维度', /叙事 · 故事还传不传得动/.test(evmPanel.textContent));
+  ok('体检含筹码维度', /筹码 · 在谁手里/.test(evmPanel.textContent));
+  ok('体检含位置维度与仓位', /位置 · 该不该进、该进多少/.test(evmPanel.textContent) && /建议仓位/.test(evmPanel.textContent));
+  ok('体检给出结论', /可参与|小仓试错|不追|观察|直接放弃|数据不足/.test(evmPanel.querySelector('.radar-checkup-head').textContent));
+  ok('体检标明数据来源', /goplus|honeypot\.is|dexscreener-search/.test(evmPanel.textContent));
+  ok('集中度已剔除池子与销毁地址', /剔除池子\/销毁\/锁仓后重算/.test(evmPanel.textContent));
+  ok('体检带重跑按钮', !!evmPanel.querySelector('[data-cu-refresh]'));
+  ok('卡片头部挂上四维结论徽标（当前文档内）', !!cardOf(evmSym).querySelector('.radar-cu-badge[data-cu-slot]'));
+  ok('体检面板带免责声明', /不构成投资建议/.test(evmPanel.textContent));
+  ok('面板跨整轮重绘后仍保持展开', !evmPanel.hidden);
+  ok('体检确实调用了外部风控接口',
+    calledUrls.some((u) => u.includes('api.gopluslabs.io')) && calledUrls.some((u) => u.includes('api.honeypot.is')),
+    calledUrls.filter((u) => /goplus|honeypot/.test(u)).join(' | '));
+
+  // 12) Solana 标：RugCheck 必须补上 GoPlus 缺失的持有人数据
+  const solCard0 = $$('.radar-card').find((c) => /Solana/.test(c.querySelector('.radar-chain').textContent));
+  ok('找到 Solana 标的用于体检', !!solCard0);
+  const solSym = solCard0.querySelector('.radar-title h3').textContent;
+  solCard0.querySelector('[data-cu-btn]').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const solPanelOf = () => { const c = cardOf(solSym); return c && c.querySelector('[data-cu-body]'); };
+  for (let i = 0; i < 120 && !(solPanelOf() && solPanelOf().querySelector('.radar-cu-dim')); i++) {
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  const solPanel = solPanelOf();
+  if (!solPanel || !solPanel.querySelector('.radar-cu-dim')) {
+    console.error('    [诊断] Solana 相关请求：', calledUrls.filter((u) => /goplus|rugcheck|honeypot/.test(u)).join('\n      '));
+  }
+  ok('Solana 体检渲染出结果', !!(solPanel && solPanel.querySelector('.radar-cu-dim')), solPanel ? solPanel.textContent.slice(0, 120) : '(无面板)');
+  ok('Solana 体检调用 RugCheck', calledUrls.some((u) => u.includes('api.rugcheck.xyz')), '未调用 rugcheck');
+  ok('Solana 筹码由 RugCheck 补齐（含持币地址数）', /持币地址 <b>5448<\/b>/.test(solPanel.innerHTML), solPanel.textContent.slice(0, 200));
+  ok('Solana 体检标明数据来源含 rugcheck', /rugcheck/.test(solPanel.textContent));
+
+  // 13) 改总资金会让下一轮体检按新口径倒推仓位
+  const cap = $('[data-radar-capital]');
+  cap.value = '50000';
+  cap.dispatchEvent(new window.Event('change', { bubbles: true }));
+  ok('总资金写回本机存储', window.localStorage.getItem('dr.capital') === '50000');
 
   console.log(fails ? '\n失败 ' + fails + ' 项' : '\n全部通过');
   window.DragonEngine.stop();

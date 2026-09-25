@@ -14,6 +14,7 @@ tracking. Zero runtime dependencies.
   - [一、项目简介](#一项目简介)
   - [二、核心功能](#二核心功能)
   - [三、龙分模型](#三龙分模型)
+  - [三之二、四维体检（安全 / 叙事 / 筹码 / 位置）](#三之二四维体检安全--叙事--筹码--位置)
   - [四、环境要求](#四环境要求)
   - [五、安装与启动](#五安装与启动)
   - [六、日常使用说明](#六日常使用说明)
@@ -29,6 +30,7 @@ tracking. Zero runtime dependencies.
   - [1. Introduction](#1-introduction)
   - [2. Core Features](#2-core-features)
   - [3. The Dragon Score](#3-the-dragon-score)
+  - [3b. Four-Dimension Checkup (Safety / Narrative / Chips / Position)](#3b-four-dimension-checkup-safety--narrative--chips--position)
   - [4. Requirements](#4-requirements)
   - [5. Install and Run](#5-install-and-run)
   - [6. Daily Usage](#6-daily-usage)
@@ -50,14 +52,17 @@ tracking. Zero runtime dependencies.
 
 抓龙雷达（Dragon Radar）是一套只看公开数据的链上扫描工具。它把 DexScreener
 的公开只读接口拉成一个候选池，对池子逐个算分、分级，然后把「量价结构」摊开在页面上，
-让使用者能快速把不值得看的标的划掉。
+让使用者能快速把不值得看的标的划掉。在此之上再补一层四维体检：合约能不能碰、故事还传不传
+得动、筹码在谁手里、现在该不该进与该进多少，把「不能碰」的理由也摆到台面上。
 
-设计原则只有三条：
+设计原则只有四条：
 
 1. **不假装有数据。** 拿不到的字段明确标成「数据缺口」，不填 0、不填中性值、
    不用演示数据撑场面。上游限流或接口异常时，页面直说，不缓存凑数。
-2. **不替你做决定。** 分数是机械加权的结果，不是推荐。页面固定位置放免责声明。
+2. **不替你做决定。** 分数与体检结论是机械加权的结果，不是推荐。页面固定位置放免责声明。
 3. **不碰你的资产。** 不连接钱包、不请求签名、不下单、不需要任何密钥。
+4. **不一票否决没证据的事。** 硬红线必须落在接口字段上。缺数据时降级并标注，
+   而不是把「没查到」当成「有问题」。
 
 项目有两种运行形态，共用同一份打分口径与同一份前端代码：
 
@@ -80,6 +85,10 @@ tracking. Zero runtime dependencies.
   热度榜（社交完整度 × 成交额）、新池（24 小时内创建）、深度榜。
 - **雷达卡片与龙虎榜。** 卡片视图含迷你价差走势图（Canvas 自绘）与可展开的评分明细；
   表格视图可点行展开因子条与风险项。
+- **四维体检。** 在任意卡片或龙虎榜展开行点击即可按需触发，补上龙分回答不了的四件事：
+  合约能不能碰（安全，一票否决）、故事还传不传得动（叙事，五个传播阶段）、
+  筹码在谁手里（集中度 × 退出通道宽窄）、现在该不该进与该进多少（位置，风险预算倒推仓位）。
+  结果带综合分与六档结论，并给出分批计划与离场条件。详见第三之二节。
 - **自选清单。** 加入自选的标的每轮固定进候选池，不受质量地板限制，存在浏览器本地。
 - **手动持仓账本。** 填合约地址、成本价、数量，用实时报价算浮动盈亏（红涨绿跌）。
 - **跟车监控。** 复刻 fomo.family 个人主页结构。该站的实时持仓与成交需要登录态令牌，
@@ -122,6 +131,167 @@ tracking. Zero runtime dependencies.
   这类噪声直接拿满分。
 - **量能限幅。** 倍数带饱和度上限，并按实测成交额封顶（实测成交额 ÷ 100），
   防止几笔小额单刷出天量倍数。
+
+## 三之二、四维体检（安全 / 叙事 / 筹码 / 位置）
+
+龙分只回答「量价结构健不健康」，回答不了另外四件事：合约能不能碰、这个故事还有没有人传、
+筹码在谁手里、现在这个位置该不该进、该进多少。这四块由四维体检补上，输出的是可执行的结论，
+不是形容词。
+
+在任意卡片或龙虎榜展开行点「四维体检」按需触发。综合分与结论：
+
+```
+综合分 = 安全 × 0.40 + 筹码 × 0.30 + 叙事 × 0.30
+```
+
+位置维度不参与加权，它是执行环节：先判断能不能碰，再决定下多少注。
+
+### 3b.1 安全：合约能不能碰
+
+安全维度是一票否决。命中硬红线直接放弃，不参与加权，避免「合约随时能跑路但量价很漂亮
+所以总分 82」这种荒唐结论。
+
+硬红线（命中任意一条即结论为「直接放弃」）：
+
+| 硬红线 | 说明 |
+| --- | --- |
+| 蜜罐 | 模拟判定买入后无法卖出 |
+| 禁止买入 / 不能全额卖出 | 合约层面限制卖出 |
+| 买入税或卖出税超 10% | 超过 10% 已无法正常交易 |
+| 代币不可转让 | 买到手也转不出去 |
+| 转账税超 10% | 同上 |
+| 发行方仍持有冻结权限 | 可冻结任意持币账户 |
+| 账户可被关闭 | 持仓可被清零 |
+| 合约可自毁且所有权未放弃 | 逻辑随时消失 |
+| owner 可改持币余额且所有权未放弃 | 余额可被任意改写 |
+| 未开源且是代理合约且所有权未放弃 | 逻辑可随时被替换 |
+| 同一创建者已发过蜜罐 | 惯犯 |
+| LP 可随时撤走 | LP 只由不超过 3 个地址持有、锁定率低于 30%，且持币地址少于 2000 |
+| 仿盘 | 存在同符号且体量在 50 倍以上的标的，而自己不是那个龙头 |
+
+扣分项（不判死，但会压低分数与结论）：未开源 25 分、代理合约 20 分、可增发 25 分、
+可暂停转账 20 分、可改税或滑点 20 分、可找回所有权 18 分、隐藏 owner 18 分、
+元数据可改 12 分、余额权限 12 分、转账钩子 15 分、交易冷却 8 分、可拉黑 10 分、
+反鲸 5 分、买卖税合计超 5% 扣 10 分。LP 锁定率与持币地址数按退出通道宽窄加权。
+
+两条容易踩错的口径，这里明确写出来：
+
+- **「有后门函数」不等于「后门能被调用」。** owner 地址是黑洞地址时所有权已放弃，
+  owner 类风险实际不可触发。这类项会降级为说明文字，只记录不扣分，否则会把
+  PEPE 这类成熟标的直接判死。
+- **LP 锁定率这个字段不可尽信。** 接口对「LP 由合约托管」的情形常记为未锁定。
+  所以它只做扣分参考，不单独构成致命判定，报告里也会提示在链上自行复核。
+
+缺数据一律不判绿：拿不到任何合约数据时安全维度得 0 分、结论为「数据不足」，不给中性分。
+
+### 3b.2 叙事：故事还传不传得动
+
+公开接口拿得到「传得动传不动」的代理量，拿不到「故事本身讲了什么」。所以这一维度只给
+传播强度，故事内容必须人工判断，报告里会把这一点显式写出来，不用机器猜测冒充结论。
+
+传播阶段判定：
+
+| 阶段 | 触发条件 | 含义 |
+| --- | --- | --- |
+| 萌芽期 seed | 池龄不足 6 小时、参与广度超 3 倍、市值低于 200 万美元 | 赔率高，失败率也最高 |
+| 传播期 spread | 参与广度超 1.5 倍、24 小时涨幅低于 80% | 四档里风险收益比最好的一段 |
+| 常态 neutral | 以上都不满足 | 没有明确阶段特征 |
+| 高潮期 peak | 24 小时涨幅 80% 以上、参与广度低于 1.2 倍 | 价格已走完大部分，参与度衰减 |
+| 退潮期 ebb | 1 小时跌幅超 15%、参与广度低于 0.8 倍 | 价格与参与度同时在退 |
+
+参与广度 = 近 1 小时成交笔数 ÷ 24 小时均速。打分构成：参与广度最高 35 分、瞬时加速度
+最高 14 分、传播载体每个 8 分（上限 24 分，载体含官网、X / Twitter、Telegram、Discord、
+付费推广位、官方代币资料、持币地址数）、持币地址增量最高 25 分（未取到两次体检快照时
+按中性偏低给 8 分，不当作好消息）。量价背离扣 20 分，高潮期扣 10 分，退潮期扣 30 分。
+
+未取到成交流水数据时阶段标记为「未知」，本维度封顶 30 分，不假报「常态」。
+
+### 3b.3 筹码：筹码在谁手里
+
+集中度先做一次重算，这是这一维度最关键的口径：
+
+- **剔除池子地址**：它持有的是 AMM 储备，不是某个人的筹码。
+- **剔除黑洞与销毁地址**：永久不可流通。
+- **剔除已锁仓地址**：短期砸不出来。
+
+不剔除这三类，前十大占比会系统性虚高，大量正常标的会被直接判死。可用前排名单不足 5 个时
+退回接口原始值，并在报告里标注口径。
+
+风险不是单看集中度，而是「集中度 × 退出通道宽窄」：
+
+```
+退出通道：持币 < 500 狭窄 / < 5000 一般 / >= 5000 宽
+集中度：前十大 >= 60% 高危 / >= 45% 偏高 / >= 30% 中等
+集中度与抛压比两项扣分按通道加权：狭窄 1.0 / 一般 0.75 / 宽 0.5
+```
+
+之所以要这样算：大市值标的的前排往往是交易所热钱包，它们出货走的是 CEX 订单簿，
+不是 DEX 池子，池子深度对它没有约束力。只有「集中度高」且「持有人少、池子是唯一出口」
+同时成立，才是真正能被一次性砸穿的结构。PEPE、BONK 这类标的的实测结论就是「老资格但
+不值得重仓」，而不是「筹码致命」。
+
+致命项（判为筹码致命，结论直接放弃）：前十大持有 60% 以上且通道不宽；前十大持有 45%
+以上且通道狭窄；通道狭窄且前十大抛压是池子深度的 5 倍以上；DEV 自留 10% 以上；
+捆绑地址网络关联地址合计持有 15% 以上。
+
+持币地址数未取得时不判致命（硬红线必须建立在证据上，不能建立在「没查到」上），
+但本维度不给通过分，分数封顶 55。
+
+### 3b.4 位置：该不该进、该进多少
+
+仓位由风险预算倒推，不由感觉决定：
+
+```
+单笔可承受亏损 = 总资金 × 2%
+仓位 = min(单笔可承受亏损 / 止损距离, 池子深度 × 0.5%, 总资金 × 5%)
+       × 四维质量系数 × 阶段系数
+四维质量系数 = (安全 × 0.45 + 筹码 × 0.35 + 叙事 × 0.20) / 100
+```
+
+止损距离按阶段变化，阶段越晚止损越紧：
+
+| 阶段 | 止损距离 | 阶段系数 |
+| --- | --- | --- |
+| 萌芽期 seed | 50% | 0.5 |
+| 传播期 spread | 40% | 1.0 |
+| 常态 neutral | 45% | 0.7 |
+| 高潮期 peak | 30% | 0.25 |
+| 退潮期 ebb | 30% | 0 |
+
+总资金在页面工具条里填（默认 10000 美元），只存在本机浏览器，不发送到任何第三方。
+市值为 0 或池子深度为 0 时不倒推仓位，直接标注「未取到市值与池子深度」，而不是给一个
+看起来合理的数字。
+
+四维存在致命项时给 0，而不是给一个「小仓位」——小仓位解决不了致命结构。有仓位时同时给出
+三档分批计划（首仓 50%、回踩加仓 30%、确认加仓 20%）与四条离场条件（止损、池子变化、
+筹码变化、叙事变化），先写清楚再进场。
+
+### 3b.5 结论阶梯
+
+| 结论 | 触发条件 |
+| --- | --- |
+| 数据不足 | 合约安全数据完全取不到 |
+| 直接放弃 | 安全命中硬红线；或筹码致命；或安全分低于 50；或进入退潮期 |
+| 不追 | 进入高潮期 |
+| 小仓试错 | 安全分 65 以上；筹码缺数据时最高只给到这一档 |
+| 可参与 | 安全分 75 以上且筹码 65 以上且叙事 60 以上 |
+| 观察 | 其余情况 |
+
+### 3b.6 调用策略与数据源
+
+| 数据源 | 用途 | 约束 |
+| --- | --- | --- |
+| GoPlus | EVM 与 Solana 合约安全标志、持有人分布 | 免费档一次只受理一个地址，不支持 comma 批量 |
+| honeypot.is | EVM 真实买卖模拟，比静态标志更接近真机 | 只覆盖部分 EVM 链 |
+| RugCheck | Solana 风险报告，含发行方、insider 网络、逐市场 LP 锁定率 | 全量报告单币可达数 MB |
+| DexScreener 同名检索 | 仿盘识别（同符号但小几个数量级的新盘） | 仅按符号检索 |
+
+因为 GoPlus 免费档不能批量，体检不能对全池逐轮调用，只能按需触发并长缓存：普通结果缓存
+6 小时，深检结果缓存 24 小时。GoPlus 对 Solana 新币不返回持有人数据，Solana 侧改由
+RugCheck 全量报告补齐持币地址数、前 20 持有人与 insider 标记。
+
+三个风控接口都返回 CORS 允许头，纯静态部署（GitHub Pages）可以在浏览器里直接调用，
+不需要服务端代理。因此体检在本地服务形态与静态形态下的行为一致。
 
 ## 四、环境要求
 
@@ -189,11 +359,15 @@ node test/static.smoke.js  # 静态站冒烟，需要 jsdom
    新池榜只看 24 小时内创建、池龄最短的。
 5. **展开明细。** 卡片里的「展开评分明细」会列出八个因子的得分、权重与文案，
    以及风险项与数据缺口。龙虎榜里点任意一行也会展开同样的明细。
-6. **加自选。** 卡片右下角「加入自选」后，该标的每轮固定进候选池，不受质量地板限制。
+6. **跑一次体检。** 看中的标的点「四维体检」：安全命不命中硬红线，故事在哪个传播阶段，
+   筹码集中在谁手里，按你填的总资金应该给多少仓位。体检调外部风控接口，首次约 1 至 3 秒，
+   结果缓存 6 小时。
+7. **加自选。** 卡片右下角「加入自选」后，该标的每轮固定进候选池，不受质量地板限制。
    自选存在浏览器本地，换浏览器就没了。
-7. **记持仓。** 到「追踪 / 抄作业」页填合约地址、成本价、数量，页面用实时报价算浮动盈亏。
+8. **记持仓。** 到「追踪 / 抄作业」页填合约地址、成本价、数量，页面用实时报价算浮动盈亏。
    成本价用美元计价，数量留空按 1 计算。
-8. **看模型说明。** 「龙分模型」页列出四个读法与完整因子权重表，方便核对页面上的分数是怎么来的。
+9. **看模型说明。** 「龙分模型」页列出四个读法与完整因子权重表，以及四维体检的口径，
+   方便核对页面上的分数与结论是怎么来的。
 
 自动更新默认开启。关闭后页面不再定时重取，需要手动点「刷新这一轮」。
 
@@ -206,7 +380,9 @@ dragon-radar/
 ├── server.js              本地服务形态入口：扫描编排、快照落盘、/api/* 路由、静态托管
 ├── lib/
 │   ├── score.js           龙分模型（同构模块：Node require / 浏览器 window.DragonScore）
-│   └── sources.js         数据源封装（同上，window.DragonSources）
+│   ├── sources.js         行情数据源封装（同上，window.DragonSources）
+│   ├── security.js        合约安全 / 筹码 / 仿盘数据层（window.DragonSecurity）
+│   └── checkup.js         四维体检模型，纯函数（window.DragonCheckup）
 ├── src/
 │   ├── engine.js          浏览器端引擎：静态形态下的扫描编排（window.DragonEngine）
 │   └── static-api.js      把 /api/* 翻译成引擎调用（window.DragonApi）
@@ -220,6 +396,7 @@ dragon-radar/
 │   └── serve-static.js    本地预览 docs/
 ├── test/
 │   ├── score.test.js      打分模型单测（零依赖）
+│   ├── checkup.test.js    四维体检模型单测（零依赖）
 │   ├── engine.test.js     浏览器端引擎 + 适配层集成测试（零依赖）
 │   ├── frontend.smoke.js  服务形态前端冒烟（需服务在跑 + jsdom）
 │   └── static.smoke.js    静态站冒烟（需 jsdom）
@@ -244,6 +421,8 @@ dragon-radar/
 | `server.js` | 本地服务形态入口 |
 | `lib/score.js` | 龙分模型与全部分因子函数 |
 | `lib/sources.js` | DexScreener / GeckoTerminal / fomo.family 数据源封装 |
+| `lib/security.js` | GoPlus / honeypot.is / RugCheck 合约安全与筹码数据层 |
+| `lib/checkup.js` | 四维体检模型（安全 / 叙事 / 筹码 / 位置），纯函数，不联网 |
 | `src/engine.js` | 浏览器端扫描引擎 |
 | `src/static-api.js` | 静态形态的 `/api/*` 适配层 |
 | `public/index.html` | 页面骨架（含 `build:scripts` 脚本注入位） |
@@ -256,10 +435,13 @@ dragon-radar/
 | `docs/api-static.js` | 构建产物：适配层 |
 | `docs/lib/score.js` | 构建产物：龙分模型 |
 | `docs/lib/sources.js` | 构建产物：数据源封装 |
+| `docs/lib/security.js` | 构建产物：合约安全与筹码数据层 |
+| `docs/lib/checkup.js` | 构建产物：四维体检模型 |
 | `docs/.nojekyll` | 让 GitHub Pages 跳过 Jekyll 处理 |
 | `tools/build-static.js` | 静态站构建脚本 |
 | `tools/serve-static.js` | 静态站本地预览服务 |
 | `test/score.test.js` | 打分模型单测 |
+| `test/checkup.test.js` | 四维体检模型单测 |
 | `test/engine.test.js` | 引擎与适配层集成测试 |
 | `test/frontend.smoke.js` | 服务形态前端冒烟测试 |
 | `test/static.smoke.js` | 静态站冒烟测试 |
@@ -276,6 +458,7 @@ dragon-radar/
 | GET | `/api/meta` | 链清单、默认链、因子权重、分级口径、扫描间隔 |
 | GET | `/api/radar` | 榜单。参数 `chain`、`view`、`sort`、`q`、`minLiq`、`limit` |
 | GET | `/api/token/:chainId/:address` | 单币详情；榜单里没有则现拉一次行情并单独打分 |
+| GET | `/api/checkup/:chainId/:address` | 四维体检。参数 `capital`（用于仓位倒推，默认 10000）、`force=1` 绕过缓存。结果缓存 6 小时（深检 24 小时） |
 | GET | `/api/price?address=` | 单币实时报价，缓存 30 秒 |
 | GET | `/api/watchlist` | 读取自选清单 |
 | POST | `/api/watchlist` | 加入自选，JSON 体 `{ tokenAddress, chainId, symbol }` |
@@ -293,6 +476,11 @@ npm test
 
 - `test/score.test.js`：12 项通过。覆盖分级映射连续性、分数恒为 0 至 100 的整数且无 NaN、
   深度与市值比单调性、未成熟窗口不影响风险判定等。
+- `test/checkup.test.js`：44 项通过。覆盖四维体检模型：安全硬红线与「所有权已放弃则
+  owner 类风险降级」的对照、仿盘与「自己就是龙头」的区分、缺失合约数据按最高风险处理；
+  五个传播阶段的判定与持币地址增量的方向性；集中度剔除池子与销毁地址前后的差异、
+  「人少且池子是唯一出口」判死与「大市值高集中」不判死的对照；仓位取三者最小值、
+  止损距离随阶段变化、阶段系数与致命项归零；以及任意夹具组合下不产生 NaN 或越界值。
 - `test/engine.test.js`：76 项通过。在进程内伪造 `self` / `localStorage` / `fetch`，
   加载真实的 `lib/` 与 `src/`，跑完整链路：建候选池、取行情、打分、落盘、
   第二轮用真实区间增量重算量能、榜单筛选、自选豁免质量地板、适配层全部端点。
@@ -402,10 +590,11 @@ git add .
 git commit -m "feat: 抓龙雷达首次开源发布
 
 - 龙分模型：8 因子加权 + 风险扣分 + 置信度，五档分级
+- 四维体检：安全（一票否决）/ 叙事 / 筹码 / 位置，含仓位倒推
 - 两种运行形态共用同一份打分口径与前端代码
 - 本地服务形态：Node 编排 + /api/* + 快照落盘
 - 纯静态形态：浏览器端引擎，可直接部署到 GitHub Pages
-- 测试：打分单测 12 项、引擎集成 76 项、前端冒烟 37 项、静态站冒烟 55 项"
+- 测试：打分单测 12 项、体检单测 44 项、引擎集成 76 项、静态站冒烟 83 项"
 git branch -M main
 git remote add origin https://github.com/kfat77/dragon-radar.git
 git push -u origin main
@@ -555,11 +744,37 @@ curl -s -o /dev/null -w "%{http_code}\n" https://api.dexscreener.com/token-boost
 命令行返回 200 而浏览器不出数据，问题一定在浏览器这一侧（代理、扩展、DNS 或
 企业网络策略），与页面代码无关。本项目的数据链路在 Node 侧有完整测试，见第 10 节。
 
+**Q14：四维体检为什么要点一下才出结果？为什么不跟着扫描一起算？**
+
+因为体力不允许。体检要调 GoPlus 的合约安全接口，而它的免费档**一次请求只受理一个地址**，
+comma 批量实测无效；Solana 侧还要取 RugCheck 的全量报告，单币响应可达数 MB。
+对每轮 100 至 160 个候选池逐个调用，会立刻触发限流，也会把上游打疼。
+
+所以策略是按需触发加长缓存：点开某个标的才跑一次，普通结果缓存 6 小时，深检结果 24 小时。
+同一个标的在缓存期内的重复点击不会重新打接口。想看最新数据点「重跑体检」。
+接口是 `GET /api/checkup/:chainId/:address`，也可以直接调。
+
+**Q15：体检里的仓位，我照着买就行吗？**
+
+不行。那个数字回答的是「按你填的总资金、按 2% 的单笔风险预算、按这个阶段该用的止损距离，
+这个标的最多能承载多少仓位」，它是**风险口径下的上限**，不是建议下单金额，更不代表
+本工具认为该买。它同时还会受池子深度和单币上限压制，所以经常比你想的小得多——
+市值小、池子浅、阶段晚的标的本来就不该重仓。
+
+真正要不要开仓、开多大，取决于你自己的判断与承受能力。总资金只存在本机浏览器，不上传。
+
 ## 十三、注意事项
 
 - 本项目不连接钱包、不请求签名、不需要私钥、不发起任何交易。
-- 页面上的分数、分级、判定都是对公开数据的机械计算，**不是投资建议**。
-  「可看」的意思是「值得你自己核一遍」，不是「可以买」。
+- 页面上的分数、分级、判定与四维体检结论都是对公开数据的机械计算，**不是投资建议**。
+  「可看」的意思是「值得你自己核一遍」，不是「可以买」。体检给出的仓位是风险预算倒推出来的
+  可承受上限，不是建议下单金额。
+- 四维体检的安全维度会一票否决，但**否决不了它读不到的东西**：合约之外的骗局、貔貅式
+  手动拉黑、社交层面的假冒、以及「技术上完全干净但就是没人接盘」，这些都不在接口字段里。
+- 体检按需触发、不做全池逐轮扫描，是上游免费档的限制，不是省事。需要看最新数据时点「重跑体检」。
+- 数据缺口一律不判绿：拿不到合约数据时安全维度给 0 分并标记「数据不足」，不会给中性分。
+  反过来，第三方接口对 LP 托管、捆绑地址这类字段经常记错，关键标的请在链上自行复核。
+- 仓位里的总资金只存在本机浏览器，不上传。不要用「能承受的亏损」以外的钱去做实验。
 - 页面会定时请求第三方公开接口。请自觉控制刷新频率与自建服务的并发，不要干扰上游服务。
 - 候选人池里的链上标的绝大多数是 meme 币，归零是常态。任何仓位决策请自行判断并承担风险。
 - 页面按 A 股习惯着色：涨为红、跌为绿。这不是笔误。
@@ -577,8 +792,10 @@ curl -s -o /dev/null -w "%{http_code}\n" https://api.dexscreener.com/token-boost
 
 关于数据与金融信息的附加说明：本项目是公开数据的统计工具，不连接钱包、不需要任何密钥、
 不代客下单，其输出不构成投资建议。全部行情读自第三方公开接口（主要为 DexScreener），
-可能延迟、缺失或错误。龙分与分级只是对这些数据的机械加权计算，不是推荐。
-任何依据本项目做出的决策及其风险由使用者自行承担。
+合约安全、持有人分布与仿盘对照读自另外三家第三方公开接口（GoPlus、honeypot.is、RugCheck），
+这些数据均可能延迟、缺失或错误。龙分、分级与四维体检结论只是对这些数据的机械加权计算，
+不是推荐，也不是对任何标的的安全性背书。四维体检里的仓位是风险预算倒推出来的可承受上限，
+不是建议下单金额。任何依据本项目做出的决策及其风险由使用者自行承担。
 
 ---
 
@@ -589,18 +806,23 @@ curl -s -o /dev/null -w "%{http_code}\n" https://api.dexscreener.com/token-boost
 Dragon Radar is an on-chain scanning tool built entirely on public data. It assembles a
 candidate pool from DexScreener's public read-only endpoints, scores and grades each pool,
 and lays the volume and price structure out on one page so you can strike out the
-candidates that do not deserve a second look.
+candidates that do not deserve a second look. On top of that it adds a four-dimension checkup:
+can the contract be touched, is the story still spreading, who holds the supply, and is this a
+sensible place to enter and how much. The reasons to stay away are put on the table too.
 
-Three design rules:
+Four design rules:
 
 1. **Never fake data.** Fields that cannot be read are reported as explicit data gaps.
    They are not filled with zero, not filled with a neutral value, and never replaced by
    demo data. When an upstream rate-limits or fails, the page says so instead of falling
    back to stale numbers.
-2. **Never make the decision for you.** The score is mechanical weighted arithmetic, not a
-   recommendation. The disclaimer sits in a fixed place on every view.
+2. **Never make the decision for you.** Scores and checkup conclusions are mechanical weighted
+   arithmetic, not recommendations. The disclaimer sits in a fixed place on every view.
 3. **Never touch your assets.** No wallet connection, no signature request, no order
    placement, no API keys.
+4. **Never veto without evidence.** A hard red line must rest on an actual API field. When data
+   is missing the model downgrades and labels it rather than treating "we could not read it" as
+   "something is wrong".
 
 There are two runtime modes. Both share the same scoring model and the same frontend code.
 
@@ -626,6 +848,12 @@ There are two runtime modes. Both share the same scoring model and the same fron
   deep (by liquidity).
 - **Card view and table view.** Cards include a Canvas-drawn sparkline and a collapsible
   factor breakdown. The table lets you click any row to expand the same detail.
+- **Four-dimension checkup.** Triggered on demand from any card or leaderboard row, it covers
+  the four questions the Dragon Score cannot answer: can the contract be touched (safety, veto
+  gated), is the story still spreading (narrative, five propagation stages), who holds the
+  supply (concentration times exit-channel width), and whether to enter and how much (position,
+  size derived from a risk budget). Each checkup returns a composite score, one of six verdicts,
+  a tranche plan and four exit conditions. See section 3b.
 - **Watchlist.** Watchlisted tokens stay in the candidate pool every round regardless of
   the quality floor. Stored in browser local storage.
 - **Manual position ledger.** Enter contract address, cost basis and size; the page marks
@@ -675,6 +903,185 @@ Two anti-noise mechanisms you should know before reading a score:
 - **Volume rate clamping.** Multiples carry a saturation ceiling and are additionally
   capped by measured volume divided by 100, so a handful of tiny orders cannot print an
   astronomical multiple.
+
+## 3b. Four-Dimension Checkup (Safety / Narrative / Chips / Position)
+
+The Dragon Score only answers "is the price and volume structure healthy". It cannot answer
+four other questions: can the contract be touched, is anyone still spreading the story,
+who holds the supply, and is this a sensible place to enter and how much. The four-dimension
+checkup covers those and returns actionable conclusions rather than adjectives.
+
+Open it from any card or from a Dragon Leaderboard row via the "四维体检" button. It runs
+on demand. Composite score and verdict:
+
+```
+composite = safety x 0.40 + chips x 0.30 + narrative x 0.30
+```
+
+Position does not enter the weighting. It is the execution step: first decide whether the
+token can be touched, then decide the stake.
+
+### 3b.1 Safety: can the contract be touched
+
+Safety is veto-gated. Hitting a hard red line means an immediate pass, with no contribution
+to the weighted score, so that "the contract can rug at any moment but the tape looks great,
+therefore 82 out of 100" is impossible.
+
+Hard red lines (any single one yields the verdict "直接放弃" / pass):
+
+| Red line | Why |
+| --- | --- |
+| Honeypot | Simulation shows you cannot sell after buying |
+| Buying banned / not fully sellable | The contract restricts selling |
+| Buy or sell tax above 10% | Above 10% normal trading is impossible |
+| Non-transferable token | You cannot move it after buying |
+| Transfer tax above 10% | Same as above |
+| Issuer still holds freeze authority | Any holder balance can be frozen |
+| Account can be closed | Holdings can be zeroed |
+| Self-destruct with ownership intact | The logic can disappear |
+| Owner can rewrite holder balances with ownership intact | Balances can be arbitrary |
+| Not open source, is a proxy, ownership intact | Logic can be swapped at will |
+| Same creator previously shipped honeypots | Repeat offender |
+| LP can be pulled at any time | LP held by at most 3 addresses, below 30% locked, and fewer than 2000 holders |
+| Copycat | A same-symbol token exists that is 50x larger while this is not the leader |
+
+Deductions (not fatal, but they pull the score and verdict down): not open source 25,
+proxy contract 20, mintable 25, pausable transfers 20, modifiable tax or slippage 20,
+can reclaim ownership 18, hidden owner 18, mutable metadata 12, balance authority 12,
+transfer hook 15, trading cooldown 8, blacklistable 10, anti-whale 5, combined tax above 5%
+10. LP lock rate and holder count are weighted by how narrow the exit channel is.
+
+Two calibration rules that are easy to get wrong:
+
+- **"A backdoor function exists" is not "the backdoor can be called".** When the owner
+  address is a burn address, ownership has been renounced and owner-gated risks cannot be
+  triggered. Those items are downgraded to notes and no points are deducted, otherwise mature
+  tokens such as PEPE would be killed outright.
+- **The LP lock field cannot be fully trusted.** Third-party APIs often report "unlocked" for
+  LP held by a contract. It is therefore only a deduction reference, never a fatal finding on
+  its own, and the report tells you to verify on chain.
+
+Missing data never scores green: when no contract data can be retrieved, safety scores 0 and
+the verdict is "数据不足" (insufficient data) rather than a neutral score.
+
+### 3b.2 Narrative: is the story still spreading
+
+Public APIs can measure whether something is spreading, but not what the story is. This
+dimension therefore reports propagation strength only; the story itself must be judged by a
+human, and the report says so explicitly instead of passing a machine guess off as a conclusion.
+
+Propagation stages:
+
+| Stage | Trigger | Meaning |
+| --- | --- | --- |
+| seed | pool younger than 6h, participation breadth above 3x, market cap below $2M | high payoff, highest failure rate |
+| spread | participation breadth above 1.5x, 24h gain below 80% | the best risk-reward window of the four |
+| neutral | none of the above | no distinct stage signature |
+| peak | 24h gain 80% or more, breadth below 1.2x | most of the move is done, participation decaying |
+| ebb | 1h drop beyond 15%, breadth below 0.8x | price and participation falling together |
+
+Participation breadth = trades in the last hour divided by the 24h average rate. Scoring:
+breadth up to 35, burst up to 14, bearish channels 8 each capped at 24 (website, X/Twitter,
+Telegram, Discord, paid promotion, official token profile, holder count), holder growth up to
+25 (when only one snapshot exists it contributes 8 as neutral-low, not as good news).
+Divergence deducts 20, peak deducts 10, ebb deducts 30.
+
+When no trade-flow data is available the stage is marked unknown and the dimension is capped
+at 30, so it cannot falsely report "neutral".
+
+### 3b.3 Chips: who holds the supply
+
+Concentration is recomputed first, which is the single most important detail here:
+
+- **Exclude the pool address**: it holds AMM reserves, not someone's position.
+- **Exclude burn and dead addresses**: permanently non-circulating.
+- **Exclude locked addresses**: they cannot dump short term.
+
+Without these exclusions top-10 concentration is systematically inflated and many healthy
+tokens get killed. When fewer than 5 usable entries remain, the raw API value is used and the
+report labels the basis.
+
+Risk is not concentration alone, but concentration times how narrow the exit is:
+
+```
+exit channel: holders < 500 narrow / < 5000 moderate / >= 5000 wide
+concentration: top-10 >= 60% severe / >= 45% high / >= 30% moderate
+concentration and dump-ratio penalties are weighted by channel: narrow 1.0 / moderate 0.75 / wide 0.5
+```
+
+The reason: for large caps the top holders are often exchange hot wallets that exit through
+CEX order books rather than the DEX pool, so pool depth does not constrain them. Only when
+high concentration and few holders with the pool as the sole exit coincide is the structure
+genuinely breakable in one go. Measured on live data, tokens such as PEPE and BONK come out as
+"established but not worth a large stake" rather than "fatal chips".
+
+Fatal findings (verdict becomes pass): top-10 above 60% with a non-wide channel; top-10 above
+45% with a narrow channel; narrow channel with top-10 dump pressure at 5x pool depth or more;
+DEV holding 10% or more; bundler network addresses holding 15% or more in aggregate.
+
+When holder count is unavailable the dimension does not declare anything fatal, because hard
+red lines must rest on evidence rather than on "we could not find it". It does refuse to pass
+the token, capping the score at 55.
+
+### 3b.4 Position: whether to enter and how much
+
+Position sizing is derived from a risk budget, not from feeling:
+
+```
+risk per trade = total capital x 2%
+size = min(risk per trade / stop distance, pool depth x 0.5%, total capital x 5%)
+       x quality factor x stage multiplier
+quality factor = (safety x 0.45 + chips x 0.35 + narrative x 0.20) / 100
+```
+
+Stop distance tightens as the stage advances:
+
+| Stage | Stop distance | Stage multiplier |
+| --- | --- | --- |
+| seed | 50% | 0.5 |
+| spread | 40% | 1.0 |
+| neutral | 45% | 0.7 |
+| peak | 30% | 0.25 |
+| ebb | 30% | 0 |
+
+Total capital is entered in the toolbar (default 10000 USD), stored only in the local browser
+and never sent to any third party. When market cap or pool depth is zero, no size is derived
+and the report states "market cap and pool depth unavailable" rather than printing a
+plausible-looking number.
+
+A fatal finding yields zero rather than a "small position", because a small position does not
+fix a fatal structure. When a size exists, the report also gives a three-tranche plan (initial
+50%, add on pullback 30%, add on confirmation 20%) and four exit conditions (stop loss, pool
+change, chip change, narrative change), written down before entry.
+
+### 3b.5 Verdict ladder
+
+| Verdict | Trigger |
+| --- | --- |
+| Insufficient data | No contract safety data at all |
+| Pass | Safety hard red line; or fatal chips; or safety below 50; or ebb stage |
+| Do not chase | Peak stage |
+| Small exploratory position | Safety 65 or above; also the ceiling when chip data is missing |
+| Participable | Safety 75+ and chips 65+ and narrative 60+ |
+| Watch | Everything else |
+
+### 3b.6 Call strategy and data sources
+
+| Source | Use | Constraint |
+| --- | --- | --- |
+| GoPlus | EVM and Solana contract safety flags, holder distribution | The free tier accepts one address per request, no comma batching |
+| honeypot.is | Real buy and sell simulation on EVM, closer to live behaviour than static flags | Only covers some EVM chains |
+| RugCheck | Solana risk report with issuer, insider network and per-market LP lock rate | A full report can exceed several MB per token |
+| DexScreener symbol search | Copycat detection (same symbol but orders of magnitude smaller) | Symbol search only |
+
+Because the GoPlus free tier cannot batch, checkups are never run across the whole pool every
+round. They run on demand and cache for a long time: 6 hours normally, 24 hours for deep
+checks. GoPlus returns no holder data for new Solana tokens, so on Solana the RugCheck full
+report supplies holder count, top-20 holders and insider flags instead.
+
+All three risk APIs return permissive CORS headers, so the pure static deployment on GitHub
+Pages calls them directly from the browser without a server-side proxy. The checkup therefore
+behaves identically in local server mode and static mode.
 
 ## 4. Requirements
 
@@ -749,12 +1156,16 @@ node test/static.smoke.js   # static site smoke test, needs jsdom
 5. **Expand the detail.** The collapsible factor breakdown lists each factor's score, weight
    and one-line explanation, plus risk items and data gaps. Clicking a table row opens the
    same detail.
-6. **Add to watchlist.** Watchlisted tokens enter the pool every round regardless of the
+6. **Run a checkup.** For a token you care about, click the checkup button: whether safety hits
+   a hard red line, which propagation stage the story is in, who holds the supply, and what
+   position size your capital implies. Checkups call third-party risk APIs, take roughly 1 to 3
+   seconds the first time, and cache for 6 hours.
+7. **Add to watchlist.** Watchlisted tokens enter the pool every round regardless of the
    quality floor. The list lives in browser local storage.
-7. **Track positions.** On the tracking view, enter contract address, cost basis and size;
+8. **Track positions.** On the tracking view, enter contract address, cost basis and size;
    PnL is marked to market with live quotes. Cost basis is in USD; an empty size means 1.
-8. **Read the model page.** It documents the four reading rules and the full factor weight
-   table, so you can check where a score came from.
+9. **Read the model page.** It documents the four reading rules, the full factor weight table
+   and the checkup methodology, so you can check where a score or a verdict came from.
 
 Auto refresh is on by default. Turn it off and the page stops re-fetching; use the manual
 refresh button instead.
@@ -766,7 +1177,9 @@ dragon-radar/
 ├── server.js              Server mode entry: scan orchestration, snapshots, /api/* routes, static hosting
 ├── lib/
 │   ├── score.js           Dragon Score model (isomorphic: Node require / browser window.DragonScore)
-│   └── sources.js         Data source wrappers (same, window.DragonSources)
+│   ├── sources.js         Market data source wrappers (same, window.DragonSources)
+│   ├── security.js        Contract safety / chips / copycat data layer (window.DragonSecurity)
+│   └── checkup.js         Four-dimension checkup model, pure functions (window.DragonCheckup)
 ├── src/
 │   ├── engine.js          Browser-side scanning engine for static mode (window.DragonEngine)
 │   └── static-api.js      Translates /api/* into engine calls (window.DragonApi)
@@ -780,6 +1193,7 @@ dragon-radar/
 │   └── serve-static.js    Local preview server for docs/
 ├── test/
 │   ├── score.test.js      Scoring model unit tests (zero dependency)
+│   ├── checkup.test.js    Checkup model unit tests (zero dependency)
 │   ├── engine.test.js     Engine plus adapter integration tests (zero dependency)
 │   ├── frontend.smoke.js  Frontend smoke test for server mode (needs a running server and jsdom)
 │   └── static.smoke.js    Static site smoke test (needs jsdom)
@@ -805,6 +1219,8 @@ re-run `npm run build:static`.
 | `server.js` | Server mode entry point |
 | `lib/score.js` | Dragon Score model and every factor function |
 | `lib/sources.js` | DexScreener, GeckoTerminal and fomo.family data source wrappers |
+| `lib/security.js` | GoPlus, honeypot.is and RugCheck contract safety and chips data layer |
+| `lib/checkup.js` | Four-dimension checkup model (safety / narrative / chips / position), pure functions, no network |
 | `src/engine.js` | Browser-side scanning engine |
 | `src/static-api.js` | `/api/*` adapter for static mode |
 | `public/index.html` | Page skeleton (contains the `build:scripts` injection point) |
@@ -817,10 +1233,13 @@ re-run `npm run build:static`.
 | `docs/api-static.js` | Build output: adapter |
 | `docs/lib/score.js` | Build output: Dragon Score model |
 | `docs/lib/sources.js` | Build output: data source wrappers |
+| `docs/lib/security.js` | Build output: contract safety and chips data layer |
+| `docs/lib/checkup.js` | Build output: checkup model |
 | `docs/.nojekyll` | Tells GitHub Pages to skip Jekyll processing |
 | `tools/build-static.js` | Static site build script |
 | `tools/serve-static.js` | Local preview server for the static site |
 | `test/score.test.js` | Scoring model unit tests |
+| `test/checkup.test.js` | Checkup model unit tests |
 | `test/engine.test.js` | Engine and adapter integration tests |
 | `test/frontend.smoke.js` | Frontend smoke test for server mode |
 | `test/static.smoke.js` | Static site smoke test |
@@ -839,6 +1258,7 @@ the official public card URL.
 | GET | `/api/meta` | Chain list, default chains, factor weights, grade bands, scan interval |
 | GET | `/api/radar` | The board. Query: `chain`, `view`, `sort`, `q`, `minLiq`, `limit` |
 | GET | `/api/token/:chainId/:address` | Single token detail; fetches and scores fresh if not on the board |
+| GET | `/api/checkup/:chainId/:address` | Four-dimension checkup. Query: `capital` (used to derive position size, default 10000), `force=1` to bypass the cache. Results cache for 6 hours, 24 hours for deep checks |
 | GET | `/api/price?address=` | Live quote for one token, cached 30 seconds |
 | GET | `/api/watchlist` | Read the watchlist |
 | POST | `/api/watchlist` | Add to watchlist, JSON body `{ tokenAddress, chainId, symbol }` |
@@ -857,6 +1277,15 @@ Results measured on the development machine:
 - `test/score.test.js`: 12 assertions pass. Covers grade band continuity, scores always
   being integers from 0 to 100 with no NaN, depth to market cap monotonicity, and immature
   windows not affecting the risk decision.
+- `test/checkup.test.js`: 44 assertions pass. Covers the checkup model: safety hard red lines
+  and the contrast with "ownership renounced so owner-gated risks are downgraded", copycat
+  detection versus "this is the leader itself", and missing contract data being treated as
+  maximum risk; all five propagation stages plus the directional regression on holder growth;
+  concentration recomputation before and after excluding pool and burn addresses, and the
+  contrast between "few holders with the pool as the only exit" (fatal) and "large cap with
+  high concentration" (not fatal); position sizing taking the minimum of three caps, stop
+  distance varying by stage, stage multipliers, and fatal findings forcing size to zero; plus
+  no NaN or out-of-range output across arbitrary fixture combinations.
 - `test/engine.test.js`: 76 assertions pass. Fakes `self`, `localStorage` and `fetch` in
   process, loads the real `lib/` and `src/`, and runs the whole pipeline: universe building,
   quote fetching, scoring, persistence, a second round recomputing volume from a real
@@ -865,17 +1294,18 @@ Results measured on the development machine:
 
 Two smoke tests require `jsdom`:
 
-- `npm run test:frontend`: 37 assertions pass. Start the server with `npm start`, then run
+- `npm run test:frontend`: 40 assertions pass. Start the server with `npm start`, then run
   the real `public/app.js` under jsdom and assert that cards, the table, filters, the
   tracking view and the model view actually render.
   **Note**: requests to port 8791 must not go through a system proxy. If `http_proxy` or
   `https_proxy` is set on the machine, clear it or add `127.0.0.1` to `no_proxy`, otherwise
   Node sends the loopback request to the proxy and fails with `ECONNREFUSED` (see Q13 item 4
   and the Caveats section).
-- `node test/static.smoke.js`: 55 assertions pass. Runs the exact set of scripts built into
-  `docs/`, with no backend and no network, and asserts that the artifact that actually ships
-  can scan, score and render by itself. It also covers chain filtering, search, row
-  expansion and manual refresh.
+- `node test/static.smoke.js`: 83 assertions pass. Runs the exact set of scripts built into
+  `docs/`, with no backend, and asserts that the artifact that actually ships can scan, score
+  and render by itself. It also covers chain filtering, search, row expansion, manual refresh,
+  and the full checkup path against stubbed GoPlus / honeypot.is / RugCheck responses on both
+  an EVM and a Solana token, including RugCheck backfilling the holder data GoPlus omits.
 
 Both smoke tests need `jsdom`:
 
@@ -1144,12 +1574,47 @@ A 200 from the command line while the browser shows nothing means the problem is
 side (proxy, extension, DNS or a corporate network policy) and unrelated to the page code. The
 data pipeline is covered by the Node-side tests listed in section 10.
 
+**Q14: Why does the checkup need a click instead of running with every scan?**
+
+Because the upstream APIs will not allow it. The GoPlus free tier accepts **only one address per
+request**; comma-joined batching was measured and does not work. On Solana the checkup also needs
+the RugCheck full report, which can exceed several MB per token. Calling both for each of the 100
+to 160 candidates every round would hit rate limits immediately and burden the upstream services.
+
+The strategy is therefore on-demand plus long caching: a checkup runs when you open a token, with
+normal results cached for 6 hours and deep checks for 24. Repeat clicks within the cache window do
+not re-hit the APIs. Click "re-run checkup" for fresh data. The endpoint is
+`GET /api/checkup/:chainId/:address` and can be called directly.
+
+**Q15: Can I just buy the position size the checkup prints?**
+
+No. That number answers a narrower question: given the total capital you entered, a 2% risk budget
+per trade and the stop distance appropriate to this stage, how much can this token carry. It is an
+**upper bound under a risk framework**, not a suggested order size, and it does not mean the tool
+thinks you should buy. It is also suppressed by pool depth and the per-token cap, so it is often
+much smaller than people expect: small caps, shallow pools and late stages genuinely do not deserve
+a large position.
+
+Whether to open a position at all, and how large, is your call and your risk. Total capital is
+stored only in your local browser and is never uploaded.
+
 ## 13. Caveats
 
 - This project does not connect to a wallet, does not request signatures, does not need
   private keys and does not place any orders.
-- Every score, grade and verdict is mechanical arithmetic over public data and is **not
-  investment advice**. "Tradable" means "worth verifying yourself", not "safe to buy".
+- Every score, grade, verdict and checkup conclusion is mechanical arithmetic over public data and
+  is **not investment advice**. "Tradable" means "worth verifying yourself", not "safe to buy".
+  The checkup's position size is a risk-derived upper bound, not a suggested order size.
+- The safety dimension vetoes hard, but it **cannot veto what it cannot read**: fraud outside the
+  contract, manually blacklisting a seller, impersonation at the social layer, and "technically
+  clean but nobody is buying". None of those are fields in any API.
+- Checkups are on demand rather than run over the whole pool every round because of upstream free
+  tier limits, not for convenience. Click "re-run checkup" when you need fresh numbers.
+- Missing data never scores green: with no contract data the safety dimension scores 0 and the
+  verdict becomes "insufficient data", never a neutral score. Conversely, third-party APIs often
+  misreport LP custody and bundler addresses, so verify anything important on chain yourself.
+- The total capital used for position sizing stays in your local browser and is never uploaded.
+  Only risk money you can afford to lose.
 - The page polls third-party public endpoints on a timer. Keep your refresh rate and any
   self-hosted concurrency reasonable and do not burden the upstream services.
 - The overwhelming majority of tokens in the candidate pool are meme coins, and going to zero
@@ -1176,9 +1641,13 @@ appropriate. Past performance does not indicate future results.
 Additional notice on data and financial information: this project is a public-data
 statistics tool. It does not connect to any wallet, does not require API keys and does not
 place orders. Nothing it outputs is investment advice. All market data is read from
-third-party public interfaces, primarily DexScreener, and may be delayed, incomplete or
-wrong. Scores and grades are mechanical arithmetic over that data, not recommendations. Any
-decision you make on the basis of this software is your own, and you bear its risk.
+third-party public interfaces, primarily DexScreener; contract safety, holder distribution and
+copycat comparison are read from three further third-party public interfaces (GoPlus,
+honeypot.is, RugCheck). All of that data may be delayed, incomplete or wrong. Scores, grades
+and checkup conclusions are mechanical arithmetic over that data, not recommendations, and not
+an endorsement of any token's safety. The position size in a checkup is a risk-derived upper
+bound, not a suggested order size. Any decision you make on the basis of this software is your
+own, and you bear its risk.
 
 ---
 

@@ -5,6 +5,8 @@
  * 单一数据源，不做人工同步：
  *   lib/score.js      -> docs/lib/score.js     龙分模型
  *   lib/sources.js    -> docs/lib/sources.js   公开数据源封装
+ *   lib/security.js   -> docs/lib/security.js  合约安全 / 筹码 / 仿盘
+ *   lib/checkup.js    -> docs/lib/checkup.js   四维体检模型
  *   src/engine.js     -> docs/engine.js        浏览器端引擎
  *   src/static-api.js -> docs/api-static.js    /api/* 适配层
  *   public/app.js     -> docs/app.js           渲染层（与 Node 形态同一份）
@@ -29,6 +31,8 @@ const STATIC_SCRIPTS = [
   '<!-- 静态形态：浏览器端引擎 + /api/* 适配层，无后端进程 -->',
   '<script src="./lib/score.js"></script>',
   '<script src="./lib/sources.js"></script>',
+  '<script src="./lib/security.js"></script>',
+  '<script src="./lib/checkup.js"></script>',
   '<script src="./engine.js"></script>',
   '<script src="./api-static.js"></script>',
   '<script src="./app.js"></script>',
@@ -57,8 +61,12 @@ function main() {
   fs.mkdirSync(path.join(DOCS, 'lib'), { recursive: true });
 
   const written = [];
+  // 单币详情与四维体检在浏览器端同样可用：体检的外部风控接口均带 CORS 允许头，
+  // 静态站可以直接联网调用，不需要服务端代理。
   written.push(copy('lib/score.js', path.join(DOCS, 'lib/score.js')));
   written.push(copy('lib/sources.js', path.join(DOCS, 'lib/sources.js')));
+  written.push(copy('lib/security.js', path.join(DOCS, 'lib/security.js')));
+  written.push(copy('lib/checkup.js', path.join(DOCS, 'lib/checkup.js')));
   written.push(copy('src/engine.js', path.join(DOCS, 'engine.js')));
   written.push(copy('src/static-api.js', path.join(DOCS, 'api-static.js')));
   written.push(copy('public/style.css', path.join(DOCS, 'style.css')));
